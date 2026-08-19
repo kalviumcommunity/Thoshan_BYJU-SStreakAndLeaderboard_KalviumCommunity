@@ -22,6 +22,7 @@ export default function Dashboard() {
           <h3>200</h3>
           <p>Weekly Points</p>
         </div>
+        {/* The rank card doubles as the shortcut to the full leaderboard. */}
         <div className="stat-card rank" onClick={() => navigate('/leaderboard')} style={{cursor: 'pointer'}}>
           <span className="icon">🏆</span>
           <h3>#14</h3>
@@ -35,6 +36,7 @@ export default function Dashboard() {
           <h3>Today's Progress</h3>
           <span>50%</span>
         </div>
+        {/* Progress and task states are static until they are connected to user data. */}
         <div className="progress-bar"><div className="fill" style={{ width: '50%' }}></div></div>
         
         <ul className="task-list">
