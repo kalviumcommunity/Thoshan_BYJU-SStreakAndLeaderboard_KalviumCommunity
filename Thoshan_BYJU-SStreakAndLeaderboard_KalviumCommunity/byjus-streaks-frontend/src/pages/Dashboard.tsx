@@ -5,9 +5,12 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-container">
-      <header>
-        <p>Good Morning</p>
-        <h2>Aarav 👋</h2>
+      <header className="dashboard-header">
+        <div>
+          <p>Good Morning</p>
+          <h2>Aarav 👋</h2>
+        </div>
+        <button className="text-button" onClick={() => navigate('/leaderboard')}>View leaderboard →</button>
       </header>
 
       {/* Stats Overview */}
@@ -47,7 +50,7 @@ export default function Dashboard() {
         </ul>
       </section>
 
-      <button className="btn-primary full-width">Continue Learning</button>
+      <button className="btn-primary full-width" onClick={() => navigate('/login')}>Continue Learning <span aria-hidden="true">→</span></button>
     </div>
   );
 }
