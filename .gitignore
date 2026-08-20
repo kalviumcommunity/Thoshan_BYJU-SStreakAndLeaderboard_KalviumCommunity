@@ -1,3 +1,5 @@
 Thoshan_BYJU-SStreakAndLeaderboard_KalviumCommunity/.git/
 node_modules/
 *.log
+
+/generated/prisma
