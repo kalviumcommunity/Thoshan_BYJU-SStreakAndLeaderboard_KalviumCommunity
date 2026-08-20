@@ -1,0 +1,97 @@
+// Prisma schema for BYJU'S Streak Engine & Leaderboard
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String          @id @default(uuid())
+  firebaseUid   String          @unique
+  email         String          @unique
+  name          String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  // Relationships
+  activities      Activity[]
+  weeklyScores    WeeklyScore[]
+  streakHistory   StreakHistory[]
+  taskCompletions TaskCompletion[]
+
+  @@map("users")
+}
+
+model TaskCompletion {
+  id          String   @id @default(uuid())
+  userId      String
+  taskId      String
+  date        String   // Timezone-safe ISO date string "YYYY-MM-DD"
+  completed   Boolean  @default(true)
+  completedAt DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, taskId, date])
+  @@index([userId, date])
+  @@map("task_completions")
+}
+
+model Activity {
+  id           String   @id @default(uuid())
+  userId       String
+  activityType String
+  points       Int      @default(0)
+  metadata     String?
+  timestamp    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@map("activities")
+}
+
+model WeeklyScore {
+  id            String   @id @default(uuid())
+  userId        String
+  weekStartDate DateTime
+  score         Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStartDate])
+  @@index([weekStartDate, score])
+  @@map("weekly_scores")
+}
+
+model LeaderboardCache {
+  id        String   @id @default(uuid())
+  category  String   @default("global")
+  rank      Int
+  userId    String
+  score     Int
+  updatedAt DateTime @updatedAt
+
+  @@index([category, rank])
+  @@map("leaderboard_cache")
+}
+
+model StreakHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  date        DateTime @default(now())
+  streakCount Int      @default(1)
+  frozen      Boolean  @default(false)
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("streak_history")
+}

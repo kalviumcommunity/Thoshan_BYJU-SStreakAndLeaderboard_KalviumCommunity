@@ -1,3 +1,15 @@
 Thoshan_BYJU-SStreakAndLeaderboard_KalviumCommunity/.git/
 node_modules/
 *.log
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Firebase & Secret Keys
+serviceAccountKey*.json
+*service-account*.json
+firebase-key*.json
+*.pem
+*.key
