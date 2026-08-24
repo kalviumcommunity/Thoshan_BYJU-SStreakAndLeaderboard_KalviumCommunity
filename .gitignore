@@ -1,3 +1,27 @@
-Thoshan_BYJU-SStreakAndLeaderboard_KalviumCommunity/.git/
 node_modules/
+dist/
+build/
 *.log
+
+# Environment variables
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# Sensitive credentials & keys
+serviceAccountKey.json
+backend/serviceAccountKey.json
+*.pem
+*.key
+
+# SQLite database files
+*.db
+*.db-journal
+backend/prisma/dev.db
+
+# Misc
+git
+Thoshan_BYJU-SStreakAndLeaderboard_KalviumCommunity/.git/
+
