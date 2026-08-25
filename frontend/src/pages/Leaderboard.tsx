@@ -1,24 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProfile, subscribeToAuthState, type BackendUser } from '../services/auth';
+import { fetchLeaderboard, type PodiumLearner, type RankedLearner, type LeaderboardResponse } from '../services/leaderboard';
 import ScreenLoader from '../components/ScreenLoader';
-
-interface PodiumLearner {
-  rank: number;
-  name: string;
-  points: number;
-  streak: number;
-  avatarBg: string;
-  badge: string;
-}
-
-interface RankedLearner {
-  rank: number;
-  name: string;
-  points: number;
-  streak: number;
-  status: string;
-}
 
 export default function Leaderboard() {
   const navigate = useNavigate();
@@ -27,6 +11,26 @@ export default function Leaderboard() {
   const [isNavigating, setIsNavigating] = useState(false);
   const [navMessage, setNavMessage] = useState('Loading...');
   const [activeTab, setActiveTab] = useState<'Day' | 'Week' | 'Month'>('Week');
+  const [liveLeaderboardStore, setLiveLeaderboardStore] = useState<Record<string, LeaderboardResponse>>({});
+
+  // Fetch live API leaderboard data on tab change
+  useEffect(() => {
+    let isMounted = true;
+    const loadData = async () => {
+      const tf = activeTab.toLowerCase() as 'day' | 'week' | 'month';
+      const data = await fetchLeaderboard(tf);
+      if (isMounted && data) {
+        setLiveLeaderboardStore((prev) => ({
+          ...prev,
+          [activeTab]: data,
+        }));
+      }
+    };
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     let isMounted = true;
@@ -76,10 +80,10 @@ export default function Leaderboard() {
   const firstWord = rawName.trim().split(/\s+/)[0] || 'Damir';
   const displayName = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
 
-  // Distinct datasets for Day, Week, and Month
-  const datasets = {
+  // Fallback / default baseline datasets
+  const fallbackDatasets = {
     Day: {
-      periodLabel: 'Today, 9 Dec',
+      periodLabel: 'Today Cohort Standings',
       podium: [
         { rank: 1, name: 'Areeq S.', points: 80, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
         { rank: 2, name: 'Rhea M.', points: 70, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
@@ -95,7 +99,7 @@ export default function Leaderboard() {
       userPoints: 40,
     },
     Week: {
-      periodLabel: '8-14 Dec (Week 2)',
+      periodLabel: 'Weekly Cohort Standings',
       podium: [
         { rank: 1, name: 'Areeq S.', points: 520, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
         { rank: 2, name: 'Rhea M.', points: 410, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
@@ -111,7 +115,7 @@ export default function Leaderboard() {
       userPoints: 290,
     },
     Month: {
-      periodLabel: 'December 2024 Total',
+      periodLabel: 'Monthly Champions Standings',
       podium: [
         { rank: 1, name: 'Areeq S.', points: 2150, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
         { rank: 2, name: 'Rhea M.', points: 1890, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
@@ -128,7 +132,16 @@ export default function Leaderboard() {
     },
   };
 
-  const currentData = datasets[activeTab];
+  const activeLive = liveLeaderboardStore[activeTab];
+  const currentData = activeLive && activeLive.podium && activeLive.podium.length > 0
+    ? {
+        periodLabel: activeLive.periodLabel,
+        podium: activeLive.podium,
+        rankings: activeLive.rankings,
+        userRank: activeLive.userStanding?.userRank || fallbackDatasets[activeTab].userRank,
+        userPoints: activeLive.userStanding?.userPoints !== undefined ? activeLive.userStanding.userPoints : fallbackDatasets[activeTab].userPoints,
+      }
+    : fallbackDatasets[activeTab];
 
   if (loading || isNavigating) {
     return <ScreenLoader message={isNavigating ? navMessage : "Fetching cohort standings..."} />;

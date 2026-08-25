@@ -189,7 +189,8 @@ export async function deleteTaskApi(taskId: string): Promise<boolean> {
 export async function toggleTaskCompletion(
   taskId: string,
   dateStr: string,
-  completed: boolean
+  completed: boolean,
+  timezone?: string
 ): Promise<ToggleTaskResponse | null> {
   const token = await getAuthToken();
   if (!token) {
@@ -202,11 +203,13 @@ export async function toggleTaskCompletion(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        ...(timezone ? { 'X-Timezone': timezone } : {}),
       },
       body: JSON.stringify({
         taskId,
         date: dateStr,
         completed,
+        timezone,
       }),
     });
 

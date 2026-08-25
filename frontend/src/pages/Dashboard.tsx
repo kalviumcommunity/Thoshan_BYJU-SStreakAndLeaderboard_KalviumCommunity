@@ -10,6 +10,7 @@ import {
   type TaskItem,
   type CreateTaskInput,
 } from '../services/task';
+import { fetchStreakData, type StreakData } from '../services/streak';
 import ScreenLoader from '../components/ScreenLoader';
 
 const MONTHS_SHORT = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -39,12 +40,12 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'Day' | 'Week' | 'Month'>('Day');
   const [showSettings, setShowSettings] = useState(false);
 
-  // Dynamic Full Date State (Default: Dec 9, 2024 for demo)
-  const [currentDate, setCurrentDate] = useState<Date>(new Date(2024, 11, 9));
+  // Dynamic Full Date State (Defaults to current date)
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [scheduleStore, setScheduleStore] = useState<Record<string, TaskItem[]>>({});
   const [tasksLoading, setTasksLoading] = useState(false);
 
-  const [streakBonus, setStreakBonus] = useState(0);
+  const [streakData, setStreakData] = useState<StreakData | null>(null);
   const [pointsBonus, setPointsBonus] = useState(0);
 
   // Modal State for Add/Edit Task
@@ -117,9 +118,23 @@ export default function Dashboard() {
     }
   }, []);
 
+  // Fetch dynamic database streak info for current user
+  const loadStreakData = useCallback(async (dateStr: string) => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const data = await fetchStreakData(tz, dateStr);
+      if (data) {
+        setStreakData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching live streak:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadTasksForDate(dateKey);
-  }, [dateKey, loadTasksForDate]);
+    loadStreakData(dateKey);
+  }, [dateKey, loadTasksForDate, loadStreakData]);
 
   const handleNavigate = (path: string, msg: string) => {
     setIsNavigating(true);
@@ -156,54 +171,26 @@ export default function Dashboard() {
     setCurrentDate(updated);
   };
 
-  // Week View Calculations
-  const getWeekBlockData = (baseDate: Date, blockOffset = 0) => {
-    const year = baseDate.getFullYear();
-    const month = baseDate.getMonth();
-    const day = baseDate.getDate();
+  // Week View Calculations (Monday to Sunday standard calendar week)
+  const getCalendarWeek = (baseDate: Date, weekOffset = 0) => {
+    const target = new Date(baseDate);
+    target.setDate(target.getDate() + weekOffset * 7);
 
-    const blockIndex = Math.floor((day - 1) / 7);
-    let targetYear = year;
-    let targetMonth = month;
-    let targetBlockIndex = blockIndex + blockOffset;
+    const dayOfWeek = target.getDay(); // 0=Sun, 1=Mon ... 6=Sat
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
 
-    while (targetBlockIndex < 0) {
-      targetMonth -= 1;
-      if (targetMonth < 0) {
-        targetMonth = 11;
-        targetYear -= 1;
-      }
-      const daysInPrev = new Date(targetYear, targetMonth + 1, 0).getDate();
-      const maxPrevBlock = Math.floor((daysInPrev - 1) / 7);
-      targetBlockIndex += maxPrevBlock + 1;
-    }
-
-    while (true) {
-      const daysInCur = new Date(targetYear, targetMonth + 1, 0).getDate();
-      const maxCurBlock = Math.floor((daysInCur - 1) / 7);
-      if (targetBlockIndex <= maxCurBlock) {
-        break;
-      }
-      targetBlockIndex -= maxCurBlock + 1;
-      targetMonth += 1;
-      if (targetMonth > 11) {
-        targetMonth = 0;
-        targetYear += 1;
-      }
-    }
-
-    const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-    const startDay = targetBlockIndex * 7 + 1;
-    const endDay = Math.min((targetBlockIndex + 1) * 7, daysInTargetMonth);
-    const monthName = MONTHS_SHORT[targetMonth];
+    const monday = new Date(target);
+    monday.setDate(target.getDate() + mondayOffset);
 
     const days = [];
-    for (let d = startDay; d <= endDay; d++) {
-      const dDate = new Date(targetYear, targetMonth, d);
+    for (let i = 0; i < 7; i++) {
+      const dDate = new Date(monday);
+      dDate.setDate(monday.getDate() + i);
+
       const isSelected =
-        baseDate.getFullYear() === targetYear &&
-        baseDate.getMonth() === targetMonth &&
-        baseDate.getDate() === d;
+        baseDate.getFullYear() === dDate.getFullYear() &&
+        baseDate.getMonth() === dDate.getMonth() &&
+        baseDate.getDate() === dDate.getDate();
 
       const dayKey = formatDateKey(dDate);
       const dayTasks = scheduleStore[dayKey] || [];
@@ -211,32 +198,32 @@ export default function Dashboard() {
 
       days.push({
         dayName: DAYS_FULL[dDate.getDay()].toUpperCase(),
-        dateNum: d,
+        dateNum: dDate.getDate(),
         date: dDate,
         isSelected,
         active: hasCompleted,
       });
     }
 
+    const sunday = days[6].date;
+    const label = `${monday.getDate()} ${MONTHS_SHORT[monday.getMonth()]} - ${sunday.getDate()} ${MONTHS_SHORT[sunday.getMonth()]}`;
+
     return {
-      label: `${startDay}-${endDay} ${monthName}`,
+      label,
       days,
-      startDay,
-      endDay,
-      month: targetMonth,
-      year: targetYear,
-      blockIndex: targetBlockIndex,
+      monday,
+      sunday,
     };
   };
 
-  const currentWeek = getWeekBlockData(currentDate, 0);
-  const prevWeek = getWeekBlockData(currentDate, -1);
-  const nextWeek = getWeekBlockData(currentDate, 1);
+  const currentWeek = getCalendarWeek(currentDate, 0);
+  const prevWeek = getCalendarWeek(currentDate, -1);
+  const nextWeek = getCalendarWeek(currentDate, 1);
 
   const changeWeek = (offset: number) => {
-    const target = getWeekBlockData(currentDate, offset);
-    const newDate = new Date(target.year, target.month, target.startDay);
-    setCurrentDate(newDate);
+    const updated = new Date(currentDate);
+    updated.setDate(currentDate.getDate() + offset * 7);
+    setCurrentDate(updated);
   };
 
   // Month View Calculations
@@ -280,13 +267,14 @@ export default function Dashboard() {
     });
     setScheduleStore((prev) => ({ ...prev, [dateKey]: updatedTasks }));
 
-    // 2. Persist to backend database for (userId, taskId, dateKey)
+    // 2. Persist to backend database for (userId, taskId, dateKey) with timezone
     try {
-      const response = await toggleTaskCompletion(taskId, dateKey, isCompleted);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const response = await toggleTaskCompletion(taskId, dateKey, isCompleted, tz);
       if (response && response.pointsAwarded > 0) {
         setPointsBonus((prev) => prev + response.pointsAwarded);
-        setStreakBonus(1);
       }
+      loadStreakData(dateKey);
     } catch (err) {
       console.error('Failed to sync task toggle with backend:', err);
     }
@@ -420,7 +408,7 @@ export default function Dashboard() {
       ? Number((user.latestStreak as { streakCount?: number }).streakCount) || 15
       : 15;
 
-  const currentStreak = baseStreak + streakBonus;
+  const currentStreak = streakData !== null ? streakData.currentStreak : baseStreak;
 
   if (loading || isNavigating) {
     return <ScreenLoader message={isNavigating ? navMessage : 'Loading your schedule...'} />;
@@ -440,7 +428,15 @@ export default function Dashboard() {
               <span className="font-bold tracking-tight text-white/90 sm:text-base md:text-lg">byjus streak</span>
             </div>
 
-            <div className="flex items-center space-x-2.5">
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setCurrentDate(new Date())}
+                className="bg-white/10 hover:bg-white/20 text-white/90 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer"
+                title="Jump to Today"
+              >
+                Today
+              </button>
               <span className="text-gray-400 font-medium text-[11px] sm:text-sm md:text-base">
                 {formatDateFull(currentDate)}
               </span>
@@ -889,6 +885,11 @@ export default function Dashboard() {
                 </div>
 
                 <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5 md:gap-3.5 text-center">
+                  {/* Empty offset padding cells for Monday-first weekday alignment */}
+                  {Array.from({ length: (new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => (
+                    <div key={`offset-${i}`} className="h-8 sm:h-11 md:h-14 opacity-0 pointer-events-none" />
+                  ))}
+
                   {monthDaysList.map((d) => {
                     const mDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), d);
                     const mKey = formatDateKey(mDate);

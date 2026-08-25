@@ -1,4 +1,6 @@
 const prisma = require('../config/prisma');
+const streakService = require('./streak.service');
+const leaderboardService = require('./leaderboard.service');
 
 /**
  * Default curriculum templates to seed for new users who don't have tasks yet.
@@ -357,9 +359,10 @@ async function getCompletionsForDate(userId, dateString) {
  * @param {string} taskId - Task identifier
  * @param {string} dateString - "YYYY-MM-DD"
  * @param {boolean} completed - Desired completion state
- * @returns {Promise<{ completion: object, pointsAwarded: number }>}
+ * @param {string} [timezone] - Optional client timezone
+ * @returns {Promise<{ completion: object, pointsAwarded: number, streak: object }>}
  */
-async function toggleTaskCompletion(userId, taskId, dateString, completed) {
+async function toggleTaskCompletion(userId, taskId, dateString, completed, timezone) {
   // 1. Check existing completion state for this exact user + task + date
   const existing = await prisma.taskCompletion.findUnique({
     where: {
@@ -397,6 +400,9 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed) {
   let pointsAwarded = 0;
 
   // 3. Update weekly score and activity points only on state change (prevents double-counting)
+  // Uses consistent UTC start of week calculation
+  const weekStart = leaderboardService.getStartOfWeek(new Date());
+
   if (completed && !previouslyCompleted) {
     pointsAwarded = 15;
 
@@ -411,14 +417,7 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed) {
       },
     });
 
-    // Update current week score
-    const now = new Date();
-    const weekStart = new Date(now);
-    const day = weekStart.getDay();
-    const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
-    weekStart.setDate(diff);
-    weekStart.setHours(0, 0, 0, 0);
-
+    // Increment current week score
     await prisma.weeklyScore.upsert({
       where: {
         userId_weekStartDate: {
@@ -435,11 +434,39 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed) {
         score: 15,
       },
     });
+  } else if (!completed && previouslyCompleted) {
+    // Revert activity and score when task is marked uncompleted
+    await prisma.activity.deleteMany({
+      where: {
+        userId,
+        activityType: 'task_completion',
+        metadata: JSON.stringify({ taskId, date: dateString }),
+      },
+    });
+
+    await prisma.weeklyScore.updateMany({
+      where: {
+        userId,
+        weekStartDate: weekStart,
+        score: { gte: 15 },
+      },
+      data: {
+        score: { decrement: 15 },
+      },
+    });
   }
+
+  // 4. Calculate updated streak metrics based on live database state (instant streak calculation)
+  const streak = await streakService.calculateUserStreak(userId, {
+    referenceDate: dateString,
+    timezone,
+    persist: true,
+  });
 
   return {
     completion,
     pointsAwarded,
+    streak,
   };
 }
 

@@ -237,13 +237,12 @@ async function testLocalAuthEndpoints() {
     });
   } finally {
     server.close();
+    await redis.disconnect();
     await prisma.$disconnect();
   }
 
   console.log(`\nLocal Auth Tests completed: ${passed} passed, ${failed} failed.`);
-  if (failed > 0) {
-    process.exit(1);
-  }
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 testLocalAuthEndpoints();

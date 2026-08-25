@@ -5,8 +5,23 @@ const taskService = require('../services/task.service');
  * Helper to retrieve internal user record from Firebase token
  */
 async function getAuthUser(req) {
-  const { uid } = req.user;
-  const user = await authService.getUserByFirebaseUid(uid);
+  if (!req.user) {
+    const error = new Error('Authentication required');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const userId = req.user.id;
+  const firebaseUid = req.user.uid;
+
+  let user = null;
+  if (userId) {
+    user = await authService.getUserById(userId);
+  }
+  if (!user && firebaseUid) {
+    user = await authService.getUserByFirebaseUid(firebaseUid);
+  }
+
   if (!user) {
     const error = new Error('User not found');
     error.statusCode = 404;
@@ -186,7 +201,8 @@ async function getCompletions(req, res, next) {
 async function toggleCompletion(req, res, next) {
   try {
     const user = await getAuthUser(req);
-    const { taskId, date: dateParam, completed } = req.body;
+    const { taskId, date: dateParam, completed, timezone } = req.body;
+    const clientTimezone = timezone || req.headers['x-timezone'];
 
     if (!taskId || typeof taskId !== 'string') {
       return res.status(400).json({
@@ -209,12 +225,13 @@ async function toggleCompletion(req, res, next) {
       });
     }
 
-    const result = await taskService.toggleTaskCompletion(user.id, taskId, dateParam, completed);
+    const result = await taskService.toggleTaskCompletion(user.id, taskId, dateParam, completed, clientTimezone);
 
     return res.status(200).json({
       success: true,
       completion: result.completion,
       pointsAwarded: result.pointsAwarded,
+      streak: result.streak,
     });
   } catch (error) {
     next(error);

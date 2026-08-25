@@ -117,6 +117,7 @@ model StreakHistory {
 
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, date])
   @@index([userId, date])
   @@map("streak_history")
 }
