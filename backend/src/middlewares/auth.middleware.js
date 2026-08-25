@@ -1,93 +1,90 @@
 const { auth } = require('../config/firebase');
+const { verifyToken } = require('../utils/jwt');
 
 /**
- * Firebase Auth Verification Middleware
- * Extracts and verifies the Firebase ID token from the Authorization header.
- * Attaches the decoded user payload to req.user on success.
+ * Dual Authentication Middleware
+ * Supports both custom local JWT tokens and Firebase ID tokens.
+ * Attaches authenticated user context to `req.user`.
  */
 async function verifyFirebaseToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authorization header is missing. Please provide a Bearer token.',
+    });
+  }
+
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return res.status(401).json({
+      success: false,
+      message: 'Malformed Authorization header. Expected format: Bearer <token>',
+    });
+  }
+
+  const token = parts[1].trim();
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Bearer token is empty. Please provide a valid token.',
+    });
+  }
+
+  // 1. Try verifying as local application JWT
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader) {
+    const decodedJwt = verifyToken(token);
+    if (decodedJwt && decodedJwt.id) {
+      req.user = {
+        id: decodedJwt.id,
+        uid: decodedJwt.id, // compatibility alias
+        email: decodedJwt.email,
+        name: decodedJwt.name,
+      };
+      return next();
+    }
+  } catch (jwtErr) {
+    // If it was explicitly an expired local JWT, return token expired immediately
+    if (jwtErr.code === 'TOKEN_EXPIRED' && !token.startsWith('eyJhbGciOiJSUzI1Ni')) {
       return res.status(401).json({
         success: false,
-        message: 'Authorization token missing. Expected Authorization: Bearer <token>'
+        code: 'TOKEN_EXPIRED',
+        message: 'Authentication token has expired. Please log in again.',
+      });
+    }
+  }
+
+  // 2. Try verifying as Firebase ID token
+  try {
+    const decodedFirebaseToken = await auth.verifyIdToken(token);
+    req.user = decodedFirebaseToken;
+    return next();
+  } catch (firebaseErr) {
+    if (firebaseErr.code === 'auth/id-token-expired') {
+      return res.status(401).json({
+        success: false,
+        code: 'TOKEN_EXPIRED',
+        message: 'Firebase authentication token has expired. Please log in again.',
       });
     }
 
-    if (!authHeader.startsWith('Bearer ')) {
+    if (firebaseErr.code === 'auth/id-token-revoked') {
       return res.status(401).json({
         success: false,
-        message: 'Authorization header malformed. Expected format: Bearer <token>'
+        code: 'TOKEN_REVOKED',
+        message: 'Authentication token has been revoked. Please log in again.',
       });
     }
 
-    const token = authHeader.split('Bearer ')[1].trim();
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authorization token is empty. Expected format: Bearer <token>'
-      });
-    }
-
-    // Verify token with Firebase Admin SDK
-    const decodedToken = await auth.verifyIdToken(token);
-
-    // Attach decoded user info to request
-    req.user = {
-      uid: decodedToken.uid,
-      email: decodedToken.email || null,
-      name: decodedToken.name || null,
-      picture: decodedToken.picture || null,
-      emailVerified: decodedToken.email_verified || false,
-      firebase: decodedToken
-    };
-
-    next();
-  } catch (error) {
-    // Distinct error handling based on Firebase error codes
-    switch (error.code) {
-      case 'auth/id-token-expired':
-        return res.status(401).json({
-          success: false,
-          code: 'TOKEN_EXPIRED',
-          message: 'Firebase ID token has expired. Please refresh the token on the client and try again.'
-        });
-
-      case 'auth/id-token-revoked':
-        return res.status(401).json({
-          success: false,
-          code: 'TOKEN_REVOKED',
-          message: 'Firebase ID token has been revoked. Please sign in again.'
-        });
-
-      case 'auth/invalid-id-token':
-      case 'auth/argument-error':
-        return res.status(401).json({
-          success: false,
-          code: 'INVALID_TOKEN',
-          message: 'Invalid Firebase ID token provided.'
-        });
-
-      case 'auth/user-disabled':
-        return res.status(403).json({
-          success: false,
-          code: 'USER_DISABLED',
-          message: 'The user account associated with this token has been disabled.'
-        });
-
-      default:
-        return res.status(401).json({
-          success: false,
-          code: 'AUTH_FAILED',
-          message: `Authentication failed: ${error.message}`
-        });
-    }
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid or unauthorized authentication token.',
+    });
   }
 }
 
 module.exports = {
-  verifyFirebaseToken
+  verifyFirebaseToken,
+  authenticate: verifyFirebaseToken,
 };

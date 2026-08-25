@@ -1,34 +1,24 @@
 const authService = require('../services/auth.service');
 
 /**
- * Controller for POST /auth/sync
- * Called right after client-side Firebase signup or login.
- * Creates or updates the user record in PostgreSQL.
+ * Controller for POST /auth/register
+ * Register a new user with email, password, and optional display name.
  */
-async function syncUser(req, res, next) {
+async function register(req, res, next) {
   try {
-    const { uid, email, name: tokenName } = req.user;
-    const { name: bodyName } = req.body || {};
+    const { email, password, name } = req.body;
 
-    const displayName = bodyName || tokenName || null;
-
-    const { user, isNewUser } = await authService.syncUser({
-      firebaseUid: uid,
-      email: email,
-      name: displayName
+    const result = await authService.registerUser({
+      email,
+      password,
+      name,
     });
 
-    return res.status(isNewUser ? 201 : 200).json({
+    return res.status(201).json({
       success: true,
-      message: isNewUser ? 'User created and synced successfully' : 'User profile synced successfully',
-      user: {
-        id: user.id,
-        firebaseUid: user.firebaseUid,
-        email: user.email,
-        name: user.name,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
+      message: 'User registered successfully',
+      token: result.token,
+      user: result.user,
     });
   } catch (error) {
     next(error);
@@ -36,35 +26,131 @@ async function syncUser(req, res, next) {
 }
 
 /**
- * Controller for GET /profile (or GET /auth/profile)
- * Protected route that looks up the user in PostgreSQL by req.user.uid (firebaseUid).
- * Returns 404 if the user hasn't been synced to PostgreSQL yet.
+ * Controller for POST /auth/login
+ * Authenticate user with email and password.
  */
-async function getProfile(req, res, next) {
+async function login(req, res, next) {
   try {
-    const { uid } = req.user;
+    const { email, password } = req.body;
 
-    const user = await authService.getUserByFirebaseUid(uid);
+    const result = await authService.loginUser({
+      email,
+      password,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token: result.token,
+      user: result.user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Controller for GET /auth/me
+ * Retrieve the profile of the authenticated user.
+ */
+async function getMe(req, res, next) {
+  try {
+    const userId = req.user.id || req.user.uid;
+    let user = await authService.getUserById(userId);
+
+    if (!user && req.user.uid) {
+      user = await authService.getUserByFirebaseUid(req.user.uid);
+    }
 
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User profile not found in database. Please sync your account via POST /auth/sync.'
+        message: 'User profile not found',
       });
     }
 
     return res.status(200).json({
       success: true,
-      user: {
-        id: user.id,
-        firebaseUid: user.firebaseUid,
-        email: user.email,
-        name: user.name,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        latestStreak: user.streakHistory && user.streakHistory[0] ? user.streakHistory[0] : null,
-        weeklyScore: user.weeklyScores && user.weeklyScores[0] ? user.weeklyScores[0] : null
-      }
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Controller for POST /auth/logout
+ */
+async function logout(req, res, next) {
+  try {
+    return res.status(200).json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Controller for POST /auth/sync
+ * Syncs a Firebase-authenticated user into the database.
+ */
+async function syncUser(req, res, next) {
+  try {
+    const { uid, email, name: tokenName } = req.user;
+    const { name: bodyName } = req.body;
+
+    const displayName = bodyName || tokenName || null;
+    const userEmail = email || req.body.email;
+
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required for user sync',
+      });
+    }
+
+    const { user, isNewUser } = await authService.syncUser({
+      firebaseUid: uid,
+      email: userEmail,
+      name: displayName,
+    });
+
+    return res.status(isNewUser ? 201 : 200).json({
+      success: true,
+      message: isNewUser ? 'User created and synced successfully' : 'User synced successfully',
+      isNewUser,
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Controller for GET /auth/profile
+ * Retrieves the profile of the authenticated user by Firebase UID or ID.
+ */
+async function getProfile(req, res, next) {
+  try {
+    const { uid } = req.user;
+    let user = await authService.getUserByFirebaseUid(uid);
+
+    if (!user && req.user.id) {
+      user = await authService.getUserById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User profile not found in database',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user,
     });
   } catch (error) {
     next(error);
@@ -72,6 +158,10 @@ async function getProfile(req, res, next) {
 }
 
 module.exports = {
+  register,
+  login,
+  getMe,
+  logout,
   syncUser,
-  getProfile
+  getProfile,
 };

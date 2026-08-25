@@ -9,7 +9,12 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "seed": "node scripts/seed-user-data.js"
+    "seed": "node scripts/seed-user-data.js",
+    "test": "node test/regression.test.js",
+    "test:all": "node test/http.test.js && node test/streak.test.js && node test/leaderboard.test.js && node test/regression.test.js",
+    "test:regression": "node test/regression.test.js",
+    "test:streak": "node test/streak.test.js",
+    "test:leaderboard": "node test/leaderboard.test.js"
   },
   "keywords": [
     "byjus",
@@ -23,10 +28,14 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^6.4.1",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "firebase-admin": "^13.1.0"
+    "express-rate-limit": "^8.6.2",
+    "firebase-admin": "^13.1.0",
+    "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.9",
