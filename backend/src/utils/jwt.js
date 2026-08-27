@@ -1,6 +1,24 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'byjus-streak-leaderboard-super-secure-jwt-secret-key-2026';
+// Require JWT_SECRET to be explicitly set — no hardcoded production fallback.
+// In development, a clearly-labelled dev-only default is used with a warning.
+let JWT_SECRET;
+if (process.env.JWT_SECRET) {
+  JWT_SECRET = process.env.JWT_SECRET;
+} else if (process.env.NODE_ENV === 'production') {
+  throw new Error(
+    '[JWT] FATAL: JWT_SECRET environment variable is not set. ' +
+    'Set a strong random secret before starting the server in production.'
+  );
+} else {
+  // Development-only fallback — never used in production
+  JWT_SECRET = 'dev-only-insecure-jwt-secret-do-not-use-in-production';
+  console.warn(
+    '[JWT] WARNING: JWT_SECRET is not set. Using an insecure dev-only secret. ' +
+    'Set JWT_SECRET in your .env file before deploying.'
+  );
+}
+
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 /**
