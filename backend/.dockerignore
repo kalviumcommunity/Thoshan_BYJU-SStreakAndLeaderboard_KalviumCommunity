@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.production
+prisma/*.db
+prisma/*.db-journal
+serviceAccountKey.json
+*.log
+dist
+coverage
+.git
