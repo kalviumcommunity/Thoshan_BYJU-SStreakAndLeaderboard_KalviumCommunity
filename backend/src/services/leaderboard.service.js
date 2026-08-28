@@ -297,6 +297,11 @@ async function getUserRankAndSurroundings(userId, timeframe = 'week', radius = 3
   const normalizedTimeframe = ['day', 'week', 'month', 'all_time'].includes(timeframe)
     ? timeframe
     : 'week';
+  const parsedRadius = Number.parseInt(radius, 10);
+  const safeRadius = Math.min(
+    Math.max(Number.isFinite(parsedRadius) ? parsedRadius : 3, 1),
+    20
+  );
   const zsetKey = `leaderboard_zset:${normalizedTimeframe}`;
   const cacheKey = `leaderboard:${normalizedTimeframe}`;
 
@@ -309,8 +314,8 @@ async function getUserRankAndSurroundings(userId, timeframe = 'week', radius = 3
         const userScore = (await redis.zscore(zsetKey, userId)) ?? 0;
 
         // Query surrounding window of user IDs from ZSET
-        const startIdx = Math.max(0, rank0 - radius);
-        const stopIdx = rank0 + radius;
+        const startIdx = Math.max(0, rank0 - safeRadius);
+        const stopIdx = rank0 + safeRadius;
         const surroundingIds = await redis.zrevrange(zsetKey, startIdx, stopIdx);
 
         // Fetch user metadata for enrichment

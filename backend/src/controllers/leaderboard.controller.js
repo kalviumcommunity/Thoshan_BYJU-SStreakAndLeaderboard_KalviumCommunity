@@ -70,7 +70,11 @@ async function getMyRank(req, res, next) {
     }
 
     const timeframe = req.query.timeframe || 'week';
-    const radius = parseInt(req.query.radius, 10) || 3;
+    const parsedRadius = Number.parseInt(req.query.radius, 10);
+    const radius = Math.min(
+      Math.max(Number.isFinite(parsedRadius) ? parsedRadius : 3, 1),
+      20
+    );
 
     const standing = await leaderboardService.getUserRankAndSurroundings(user.id, timeframe, radius);
 

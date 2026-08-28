@@ -10,6 +10,7 @@ router.use(verifyFirebaseToken);
 // Task CRUD
 router.post('/', taskController.createTask);
 router.get('/', taskController.getTasks);
+router.get('/calendar', taskController.getCalendarRange);
 router.get('/completions', taskController.getCompletions);
 router.post('/toggle', taskController.toggleCompletion);
 router.get('/:id', taskController.getTaskById);

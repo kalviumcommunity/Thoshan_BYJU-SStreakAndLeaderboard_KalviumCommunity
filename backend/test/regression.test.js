@@ -217,6 +217,87 @@ async function runRegressionTestSuite() {
       assert.strictEqual(start.getUTCSeconds(), 0);
     });
 
+    console.log('\n--- Section 6: Security & Atomicity Audit Tests ---');
+
+    await test('Security: User A cannot toggle or modify User B\'s task (must throw 404 Task not found)', async () => {
+      // Create user B
+      const userB = await prisma.user.create({
+        data: {
+          firebaseUid: `reg-uid-b-${Date.now()}`,
+          email: `reg-user-b-${Date.now()}@byjus.com`,
+          name: 'User B',
+        },
+      });
+
+      try {
+        let threw404 = false;
+        try {
+          // User B attempts to toggle User A's task
+          await taskService.toggleTaskCompletion(userB.id, createdTask.id, todayStr, true);
+        } catch (err) {
+          if (err.statusCode === 404 && err.message.includes('Task not found')) {
+            threw404 = true;
+          }
+        }
+        assert.strictEqual(threw404, true, 'Must reject cross-user task modification with 404');
+      } finally {
+        await prisma.user.delete({ where: { id: userB.id } });
+      }
+    });
+
+    await test('Historical week attribution: Completing historical task updates that historical week score', async () => {
+      const historicalDate = '2026-07-15'; // A past week
+      const histTask = await taskService.createTask(testUser.id, {
+        title: 'Past Chemistry Quiz',
+        category: 'Assessment',
+        time: '2 PM',
+        date: historicalDate,
+        isRecurring: false,
+      });
+
+      const res = await taskService.toggleTaskCompletion(testUser.id, histTask.id, historicalDate, true);
+      assert.strictEqual(res.completed, true);
+      assert.strictEqual(res.pointsAwarded, 15);
+      assert.strictEqual(res.pointsDelta, 15);
+
+      // Verify WeeklyScore was created for that historical week
+      const targetHistDate = new Date(`${historicalDate}T00:00:00.000Z`);
+      const histWeekStart = leaderboardService.getStartOfWeek(targetHistDate);
+      const score = await prisma.weeklyScore.findUnique({
+        where: {
+          userId_weekStartDate: {
+            userId: testUser.id,
+            weekStartDate: histWeekStart,
+          },
+        },
+      });
+      assert(score !== null, 'WeeklyScore must be attributed to the historical week');
+      assert(score.points >= 15);
+    });
+
+    await test('Calendar range service: getTasksCalendarRange aggregates tasks across date span', async () => {
+      const range = await taskService.getTasksCalendarRange(testUser.id, '2026-08-20', '2026-08-26');
+      assert(range && typeof range === 'object');
+      assert(Array.isArray(range['2026-08-25']));
+      assert(range['2026-08-25'].some((t) => t.id === recurringTask.id));
+    });
+
+    await test('Task recurrence update: switching to recurring clears specific date', async () => {
+      const oneTimeTask = await taskService.createTask(testUser.id, {
+        title: 'Temp Task',
+        date: '2026-08-30',
+        isRecurring: false,
+      });
+
+      const updated = await taskService.updateTask(testUser.id, oneTimeTask.id, {
+        isRecurring: true,
+        recurringType: 'weekdays',
+      });
+
+      assert.strictEqual(updated.isRecurring, true);
+      assert.strictEqual(updated.date, null, 'Switching to recurring must set date to null');
+    });
+
   } finally {
     // Cleanup
     if (testUser) {
