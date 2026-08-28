@@ -204,6 +204,72 @@ async function getTasksForDate(userId, dateString) {
 }
 
 /**
+ * Get tasks grouped by date across a specified calendar range [startDate, endDate].
+ * Used by frontend week and month views to avoid per-date N+1 requests.
+ * @param {string} userId - User UUID
+ * @param {string} startDate - "YYYY-MM-DD"
+ * @param {string} endDate - "YYYY-MM-DD"
+ * @returns {Promise<Record<string, Array>>}
+ */
+async function getTasksCalendarRange(userId, startDate, endDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    const error = new Error('Invalid date range. Expected YYYY-MM-DD format.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await seedDefaultTasksForUser(userId);
+
+  const userTasks = await prisma.task.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const completions = await prisma.taskCompletion.findMany({
+    where: {
+      userId,
+      date: {
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+  });
+
+  const completionMap = new Map();
+  for (const c of completions) {
+    completionMap.set(`${c.date}:${c.taskId}`, c.completed);
+  }
+
+  const calendar = {};
+  let current = startDate;
+  while (streakService.getDaysDifference(current, endDate) >= 0) {
+    const activeTasks = userTasks.filter((t) => isTaskActiveOnDate(t, current));
+    calendar[current] = activeTasks.map((t) => {
+      const isCompleted = Boolean(completionMap.get(`${current}:${t.id}`));
+      return {
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        category: t.category,
+        time: t.time || '10 AM',
+        date: t.date || current,
+        isRecurring: t.isRecurring,
+        recurringType: t.recurringType,
+        recurringDays: t.recurringDays,
+        status: isCompleted ? 'DONE' : 'PENDING',
+        completed: isCompleted,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      };
+    });
+
+    current = streakService.shiftDateDays(current, 1);
+  }
+
+  return calendar;
+}
+
+/**
  * Get all raw task definitions for a user.
  * @param {string} userId - User UUID
  * @returns {Promise<Array>}
@@ -246,7 +312,7 @@ async function getTaskById(userId, taskId) {
 }
 
 /**
- * Update an existing task.
+ * Update an existing task with robust recurrence state transitions.
  * @param {string} userId - User UUID
  * @param {string} taskId - Task UUID
  * @param {Object} updateData - Fields to update
@@ -278,7 +344,29 @@ async function updateTask(userId, taskId, updateData) {
     recurringDays,
   } = updateData;
 
-  const dataToUpdate = {};
+  // Compute final task state transition
+  const finalIsRecurring = isRecurring !== undefined ? Boolean(isRecurring) : existing.isRecurring;
+  const finalRecurringType = recurringType !== undefined
+    ? (finalIsRecurring ? recurringType : 'none')
+    : (finalIsRecurring ? (existing.recurringType === 'none' ? 'daily' : existing.recurringType) : 'none');
+  const finalRecurringDays = recurringDays !== undefined
+    ? (recurringDays ? String(recurringDays).trim() : null)
+    : existing.recurringDays;
+
+  let finalDate;
+  if (finalIsRecurring) {
+    finalDate = null;
+  } else {
+    finalDate = date !== undefined ? date : (existing.date || streakService.formatDateToISO(new Date()));
+  }
+
+  const dataToUpdate = {
+    isRecurring: finalIsRecurring,
+    recurringType: finalRecurringType,
+    recurringDays: finalIsRecurring ? finalRecurringDays : null,
+    date: finalDate,
+  };
+
   if (title !== undefined) {
     if (!title || !title.trim()) {
       const error = new Error('Task title cannot be empty');
@@ -287,13 +375,15 @@ async function updateTask(userId, taskId, updateData) {
     }
     dataToUpdate.title = title.trim();
   }
-  if (description !== undefined) dataToUpdate.description = description ? description.trim() : null;
-  if (category !== undefined) dataToUpdate.category = category.trim();
-  if (time !== undefined) dataToUpdate.time = time ? time.trim() : null;
-  if (isRecurring !== undefined) dataToUpdate.isRecurring = Boolean(isRecurring);
-  if (recurringType !== undefined) dataToUpdate.recurringType = recurringType;
-  if (recurringDays !== undefined) dataToUpdate.recurringDays = recurringDays ? String(recurringDays).trim() : null;
-  if (date !== undefined) dataToUpdate.date = isRecurring ? null : date;
+  if (description !== undefined) {
+    dataToUpdate.description = description ? description.trim() : null;
+  }
+  if (category !== undefined) {
+    dataToUpdate.category = category ? category.trim() : 'Daily Task';
+  }
+  if (time !== undefined) {
+    dataToUpdate.time = time ? time.trim() : null;
+  }
 
   const updated = await prisma.task.update({
     where: { id: taskId },
@@ -353,110 +443,154 @@ async function getCompletionsForDate(userId, dateString) {
 }
 
 /**
- * Toggle or set the completion state of a specific task on a specific date.
- * Enforces uniqueness per (userId, taskId, date) and avoids double-counting points.
+ * Transactional Task Completion Toggle
+ * 1. Enforces strict task ownership (User A cannot complete User B's task -> 404).
+ * 2. Runs in an atomic Prisma transaction to prevent partial state corruption across
+ *    TaskCompletion, Activity, and WeeklyScore tables.
+ * 3. Correctly calculates the weekly score cohort from the actual completion dateString,
+ *    not today's date (fixes historical week score bug).
+ * 4. Invalidates the Redis leaderboard cache when score changes occur.
+ * 5. Returns explicit pointsDelta (+15, -15, or 0) and recalculated streak metrics.
+ *
  * @param {string} userId - User UUID
  * @param {string} taskId - Task identifier
  * @param {string} dateString - "YYYY-MM-DD"
  * @param {boolean} completed - Desired completion state
  * @param {string} [timezone] - Optional client timezone
- * @returns {Promise<{ completion: object, pointsAwarded: number, streak: object }>}
+ * @returns {Promise<{ completion: object, completed: boolean, pointsDelta: number, pointsAwarded: number, streak: object }>}
  */
 async function toggleTaskCompletion(userId, taskId, dateString, completed, timezone) {
-  // 1. Check existing completion state for this exact user + task + date
-  const existing = await prisma.taskCompletion.findUnique({
-    where: {
-      userId_taskId_date: {
-        userId,
-        taskId,
-        date: dateString,
-      },
-    },
-  });
+  if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const error = new Error('Invalid date format. Expected YYYY-MM-DD.');
+    error.statusCode = 400;
+    throw error;
+  }
 
-  const previouslyCompleted = existing ? existing.completed : false;
-
-  // 2. Upsert task completion record for this date
-  const completion = await prisma.taskCompletion.upsert({
+  // 1. Verify task ownership BEFORE modifying completion state
+  const task = await prisma.task.findFirst({
     where: {
-      userId_taskId_date: {
-        userId,
-        taskId,
-        date: dateString,
-      },
-    },
-    update: {
-      completed,
-      completedAt: new Date(),
-    },
-    create: {
+      id: taskId,
       userId,
-      taskId,
-      date: dateString,
-      completed,
     },
   });
 
-  let pointsAwarded = 0;
+  if (!task) {
+    const error = new Error('Task not found');
+    error.statusCode = 404;
+    throw error;
+  }
 
-  // 3. Update weekly score and activity points only on state change (prevents double-counting)
-  // Uses consistent UTC start of week calculation
-  const weekStart = leaderboardService.getStartOfWeek(new Date());
+  // 2. Derive weekly score cohort boundary from the actual completion date (P1 historical fix)
+  const [y, m, d] = dateString.split('-').map(Number);
+  const targetCompletionDate = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+  const weekStart = leaderboardService.getStartOfWeek(targetCompletionDate);
 
-  if (completed && !previouslyCompleted) {
-    pointsAwarded = 15;
-
-    // Record activity
-    await prisma.activity.create({
-      data: {
-        userId,
-        activityType: 'task_completion',
-        points: 15,
-        metadata: JSON.stringify({ taskId, date: dateString }),
-        timestamp: new Date(),
+  // 3. Execute atomic transaction across all affected database entities
+  const txResult = await prisma.$transaction(async (tx) => {
+    // Check existing completion state for this exact user + task + date
+    const existing = await tx.taskCompletion.findUnique({
+      where: {
+        userId_taskId_date: {
+          userId,
+          taskId,
+          date: dateString,
+        },
       },
     });
 
-    // Increment current week score
-    await prisma.weeklyScore.upsert({
+    const previouslyCompleted = existing ? existing.completed : false;
+
+    // Upsert task completion record for this date
+    const completion = await tx.taskCompletion.upsert({
       where: {
-        userId_weekStartDate: {
+        userId_taskId_date: {
           userId,
-          weekStartDate: weekStart,
+          taskId,
+          date: dateString,
         },
       },
       update: {
-        score: { increment: 15 },
+        completed,
+        completedAt: new Date(),
       },
       create: {
         userId,
-        weekStartDate: weekStart,
-        score: 15,
-      },
-    });
-  } else if (!completed && previouslyCompleted) {
-    // Revert activity and score when task is marked uncompleted
-    await prisma.activity.deleteMany({
-      where: {
-        userId,
-        activityType: 'task_completion',
-        metadata: JSON.stringify({ taskId, date: dateString }),
+        taskId,
+        date: dateString,
+        completed,
       },
     });
 
-    await prisma.weeklyScore.updateMany({
-      where: {
-        userId,
-        weekStartDate: weekStart,
-        score: { gte: 15 },
-      },
-      data: {
-        score: { decrement: 15 },
-      },
-    });
+    let pointsDelta = 0;
+
+    if (completed && !previouslyCompleted) {
+      pointsDelta = 15;
+
+      // Log activity
+      await tx.activity.create({
+        data: {
+          userId,
+          activityType: 'task_completion',
+          points: 15,
+          metadata: JSON.stringify({ taskId, date: dateString }),
+          timestamp: targetCompletionDate,
+        },
+      });
+
+      // Increment weekly score for the specific week of the task completion
+      await tx.weeklyScore.upsert({
+        where: {
+          userId_weekStartDate: {
+            userId,
+            weekStartDate: weekStart,
+          },
+        },
+        update: {
+          score: { increment: 15 },
+        },
+        create: {
+          userId,
+          weekStartDate: weekStart,
+          score: 15,
+        },
+      });
+    } else if (!completed && previouslyCompleted) {
+      pointsDelta = -15;
+
+      // Revert activity
+      await tx.activity.deleteMany({
+        where: {
+          userId,
+          activityType: 'task_completion',
+          metadata: JSON.stringify({ taskId, date: dateString }),
+        },
+      });
+
+      // Decrement weekly score for that specific historical week
+      await tx.weeklyScore.updateMany({
+        where: {
+          userId,
+          weekStartDate: weekStart,
+          score: { gte: 15 },
+        },
+        data: {
+          score: { decrement: 15 },
+        },
+      });
+    }
+
+    return {
+      completion,
+      pointsDelta,
+    };
+  });
+
+  // 4. Invalidate Redis leaderboard caches if scores changed (P1 cache invalidation)
+  if (txResult.pointsDelta !== 0) {
+    await leaderboardService.invalidateLeaderboardCache();
   }
 
-  // 4. Calculate updated streak metrics based on live database state (instant streak calculation)
+  // 5. Calculate updated streak metrics based on live database state
   const streak = await streakService.calculateUserStreak(userId, {
     referenceDate: dateString,
     timezone,
@@ -464,8 +598,10 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed, timez
   });
 
   return {
-    completion,
-    pointsAwarded,
+    completion: txResult.completion,
+    completed: Boolean(completed),
+    pointsDelta: txResult.pointsDelta,
+    pointsAwarded: txResult.pointsDelta > 0 ? txResult.pointsDelta : 0,
     streak,
   };
 }
@@ -473,6 +609,7 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed, timez
 module.exports = {
   createTask,
   getTasksForDate,
+  getTasksCalendarRange,
   getAllTasks,
   getTaskById,
   updateTask,

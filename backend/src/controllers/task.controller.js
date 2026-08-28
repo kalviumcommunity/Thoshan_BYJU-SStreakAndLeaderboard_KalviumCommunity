@@ -195,6 +195,34 @@ async function getCompletions(req, res, next) {
 }
 
 /**
+ * Controller for GET /tasks/calendar?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ * Returns grouped tasks and completions across the specified date range for efficient calendar views.
+ */
+async function getCalendarRange(req, res, next) {
+  try {
+    const user = await getAuthUser(req);
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'startDate and endDate query parameters (YYYY-MM-DD) are required',
+      });
+    }
+
+    const calendar = await taskService.getTasksCalendarRange(user.id, startDate, endDate);
+    return res.status(200).json({
+      success: true,
+      startDate,
+      endDate,
+      calendar,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Controller for POST /tasks/toggle
  * Body: { taskId: string, date: "YYYY-MM-DD", completed: boolean }
  */
@@ -230,6 +258,8 @@ async function toggleCompletion(req, res, next) {
     return res.status(200).json({
       success: true,
       completion: result.completion,
+      completed: result.completed,
+      pointsDelta: result.pointsDelta,
       pointsAwarded: result.pointsAwarded,
       streak: result.streak,
     });
@@ -241,6 +271,7 @@ async function toggleCompletion(req, res, next) {
 module.exports = {
   createTask,
   getTasks,
+  getCalendarRange,
   getTaskById,
   updateTask,
   deleteTask,
