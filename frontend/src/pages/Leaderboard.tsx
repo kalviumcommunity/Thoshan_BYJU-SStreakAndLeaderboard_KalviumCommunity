@@ -13,24 +13,37 @@ export default function Leaderboard() {
   const [activeTab, setActiveTab] = useState<'Day' | 'Week' | 'Month'>('Week');
   const [liveLeaderboardStore, setLiveLeaderboardStore] = useState<Record<string, LeaderboardResponse>>({});
 
-  // Fetch live API leaderboard data on tab change
-  useEffect(() => {
-    let isMounted = true;
-    const loadData = async () => {
-      const tf = activeTab.toLowerCase() as 'day' | 'week' | 'month';
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch live API leaderboard data on tab change or retry
+  const loadLeaderboardData = async () => {
+    setFetchError(null);
+    const tf = activeTab.toLowerCase() as 'day' | 'week' | 'month';
+    try {
       const data = await fetchLeaderboard(tf);
-      if (isMounted && data) {
+      if (data && data.success) {
         setLiveLeaderboardStore((prev) => ({
           ...prev,
           [activeTab]: data,
         }));
+      } else {
+        setFetchError('Unable to load leaderboard. Please try again.');
       }
-    };
-    loadData();
-    return () => {
-      isMounted = false;
-    };
+    } catch {
+      setFetchError('Unable to load leaderboard. Please check your connection and retry.');
+    }
+  };
+
+  useEffect(() => {
+    loadLeaderboardData();
   }, [activeTab]);
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    await loadLeaderboardData();
+    setRefreshing(false);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -48,7 +61,7 @@ export default function Leaderboard() {
               id: firebaseUser.uid,
               firebaseUid: firebaseUser.uid,
               email: firebaseUser.email || '',
-              name: firebaseUser.displayName || 'Damir',
+              name: firebaseUser.displayName || 'Learner',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
             });
@@ -76,72 +89,23 @@ export default function Leaderboard() {
     }, 280);
   };
 
-  const rawName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Damir');
-  const firstWord = rawName.trim().split(/\s+/)[0] || 'Damir';
+  const rawName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Learner');
+  const firstWord = rawName.trim().split(/\s+/)[0] || 'Learner';
   const displayName = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
 
-  // Fallback / default baseline datasets
-  const fallbackDatasets = {
-    Day: {
-      periodLabel: 'Today Cohort Standings',
-      podium: [
-        { rank: 1, name: 'Areeq S.', points: 80, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
-        { rank: 2, name: 'Rhea M.', points: 70, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
-        { rank: 3, name: 'Zoya K.', points: 65, streak: 19, avatarBg: 'bg-amber-600', badge: '🥉 #3' },
-      ] as PodiumLearner[],
-      rankings: [
-        { rank: 4, name: 'Meera Nair', points: 60, streak: 16, status: 'GOING' },
-        { rank: 5, name: 'Ishaan Verma', points: 55, streak: 14, status: 'GOING' },
-        { rank: 6, name: 'Priya Iyer', points: 45, streak: 12, status: 'PENDING' },
-        { rank: 7, name: 'David Charles', points: 40, streak: 10, status: 'PENDING' },
-      ] as RankedLearner[],
-      userRank: 12,
-      userPoints: 40,
-    },
-    Week: {
-      periodLabel: 'Weekly Cohort Standings',
-      podium: [
-        { rank: 1, name: 'Areeq S.', points: 520, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
-        { rank: 2, name: 'Rhea M.', points: 410, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
-        { rank: 3, name: 'Zoya K.', points: 365, streak: 19, avatarBg: 'bg-amber-600', badge: '🥉 #3' },
-      ] as PodiumLearner[],
-      rankings: [
-        { rank: 4, name: 'Meera Nair', points: 330, streak: 16, status: 'GOING' },
-        { rank: 5, name: 'Ishaan Verma', points: 312, streak: 14, status: 'GOING' },
-        { rank: 6, name: 'Priya Iyer', points: 301, streak: 12, status: 'PENDING' },
-        { rank: 7, name: 'David Charles', points: 295, streak: 10, status: 'PENDING' },
-      ] as RankedLearner[],
-      userRank: 14,
-      userPoints: 290,
-    },
-    Month: {
-      periodLabel: 'Monthly Champions Standings',
-      podium: [
-        { rank: 1, name: 'Areeq S.', points: 2150, streak: 28, avatarBg: 'bg-amber-400', badge: '🥇 #1' },
-        { rank: 2, name: 'Rhea M.', points: 1890, streak: 21, avatarBg: 'bg-[#F25C3B]', badge: '🥈 #2' },
-        { rank: 3, name: 'Zoya K.', points: 1740, streak: 19, avatarBg: 'bg-amber-600', badge: '🥉 #3' },
-      ] as PodiumLearner[],
-      rankings: [
-        { rank: 4, name: 'Meera Nair', points: 1560, streak: 16, status: 'GOING' },
-        { rank: 5, name: 'Ishaan Verma', points: 1420, streak: 14, status: 'GOING' },
-        { rank: 6, name: 'Priya Iyer', points: 1380, streak: 12, status: 'GOING' },
-        { rank: 7, name: 'David Charles', points: 1310, streak: 10, status: 'PENDING' },
-      ] as RankedLearner[],
-      userRank: 8,
-      userPoints: 1280,
-    },
-  };
-
   const activeLive = liveLeaderboardStore[activeTab];
-  const currentData = activeLive && activeLive.podium && activeLive.podium.length > 0
-    ? {
-        periodLabel: activeLive.periodLabel,
-        podium: activeLive.podium,
-        rankings: activeLive.rankings,
-        userRank: activeLive.userStanding?.userRank || fallbackDatasets[activeTab].userRank,
-        userPoints: activeLive.userStanding?.userPoints !== undefined ? activeLive.userStanding.userPoints : fallbackDatasets[activeTab].userPoints,
-      }
-    : fallbackDatasets[activeTab];
+  const podiumList: PodiumLearner[] = activeLive?.podium || [];
+  const rawRankings: RankedLearner[] = activeLive?.rankings || [];
+
+  // Exclude current user from rankings list if rendered separately in highlight card
+  const filteredRankings = rawRankings.filter(
+    (item) => item.userId !== currentUser?.id
+  );
+
+  const userRank = activeLive?.userStanding?.userRank || 1;
+  const userPoints = activeLive?.userStanding?.userPoints ?? 0;
+  const userStreak = activeLive?.userStanding?.userStreak ?? 0;
+  const periodLabel = activeLive?.periodLabel || `${activeTab} Cohort Standings`;
 
   if (loading || isNavigating) {
     return <ScreenLoader message={isNavigating ? navMessage : "Fetching cohort standings..."} />;
@@ -167,8 +131,17 @@ export default function Leaderboard() {
               <span className="font-bold tracking-tight sm:text-base md:text-lg">byjus streak</span>
             </button>
 
-            <div className="flex items-center space-x-1.5 sm:space-x-2">
-              <span className="text-gray-400 font-medium text-[11px] sm:text-sm md:text-base">Rank #{currentData.userRank}</span>
+            <div className="flex items-center space-x-2 sm:space-x-3">
+              <button
+                type="button"
+                onClick={handleManualRefresh}
+                disabled={refreshing}
+                className="bg-white/10 hover:bg-white/20 text-white/90 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer disabled:opacity-50"
+                title="Refresh rankings"
+              >
+                {refreshing ? 'Refreshing...' : '🔄 Refresh'}
+              </button>
+              <span className="text-gray-400 font-medium text-[11px] sm:text-sm md:text-base">Rank #{userRank}</span>
               <span className="text-sm sm:text-base md:text-lg">🔥</span>
             </div>
           </div>
@@ -179,7 +152,7 @@ export default function Leaderboard() {
               {activeTab === 'Day' ? "Today's Leaderboard" : activeTab === 'Month' ? 'Monthly Champions' : 'Weekly Leaderboard'}
             </h1>
             <p className="text-xs sm:text-sm md:text-base text-gray-400 mt-1 sm:mt-2">
-              {currentData.periodLabel} • Cohort Standings:
+              {periodLabel} • Cohort Standings:
             </p>
           </div>
 
@@ -209,24 +182,43 @@ export default function Leaderboard() {
           
           <div className="space-y-5 sm:space-y-6 md:space-y-7">
             
-            {/* Top 3 Podium Cards */}
-            <div className="grid grid-cols-3 gap-2.5 sm:gap-4 md:gap-6 pt-1">
-              {currentData.podium.map((learner) => (
-                <div
-                  key={learner.rank}
-                  className={`bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 md:p-6 text-center border shadow-xs flex flex-col items-center justify-between hover:shadow-md transition ${
-                    learner.rank === 1 ? 'border-amber-300 ring-2 sm:ring-4 ring-amber-300/40' : 'border-gray-200/80'
-                  }`}
-                >
-                  <span className="text-[10px] sm:text-xs md:text-sm font-black text-gray-500">{learner.badge}</span>
-                  <div className={`w-10 sm:w-14 md:w-18 h-10 sm:h-14 md:h-18 rounded-full ${learner.avatarBg} text-white font-black text-xs sm:text-base md:text-xl flex items-center justify-center shadow-sm my-1.5 sm:my-2.5`}>
-                    {learner.name.charAt(0)}
-                  </div>
-                  <p className="text-xs sm:text-base md:text-lg font-bold text-gray-900 truncate w-full">{learner.name}</p>
-                  <p className="text-[10px] sm:text-xs md:text-base font-black text-[#F25C3B] mt-0.5 sm:mt-1">{learner.points} pts</p>
+            {/* Error Message with Retry */}
+            {fetchError && (
+              <div className="bg-red-100/90 border border-red-300 text-red-800 p-4 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-xs">
+                <div className="flex items-center space-x-3">
+                  <span className="text-xl">⚠️</span>
+                  <span className="text-xs sm:text-sm font-semibold">{fetchError}</span>
                 </div>
-              ))}
-            </div>
+                <button
+                  type="button"
+                  onClick={loadLeaderboardData}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-full transition cursor-pointer"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Top 3 Podium Cards */}
+            {podiumList.length > 0 && (
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-4 md:gap-6 pt-1">
+                {podiumList.map((learner) => (
+                  <div
+                    key={learner.rank}
+                    className={`bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 md:p-6 text-center border shadow-xs flex flex-col items-center justify-between hover:shadow-md transition ${
+                      learner.rank === 1 ? 'border-amber-300 ring-2 sm:ring-4 ring-amber-300/40' : 'border-gray-200/80'
+                    }`}
+                  >
+                    <span className="text-[10px] sm:text-xs md:text-sm font-black text-gray-500">{learner.badge}</span>
+                    <div className={`w-10 sm:w-14 md:w-18 h-10 sm:h-14 md:h-18 rounded-full ${learner.avatarBg || 'bg-gray-400'} text-white font-black text-xs sm:text-base md:text-xl flex items-center justify-center shadow-sm my-1.5 sm:my-2.5`}>
+                      {learner.name.charAt(0)}
+                    </div>
+                    <p className="text-xs sm:text-base md:text-lg font-bold text-gray-900 truncate w-full">{learner.name}</p>
+                    <p className="text-[10px] sm:text-xs md:text-base font-black text-[#F25C3B] mt-0.5 sm:mt-1">{learner.points} pts</p>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Section Header */}
             <div className="flex items-center justify-between pt-1">
@@ -236,60 +228,72 @@ export default function Leaderboard() {
               <span className="text-[11px] sm:text-xs md:text-sm text-gray-400 font-medium">Refreshes hourly</span>
             </div>
 
+            {/* Empty State when no users on leaderboard */}
+            {podiumList.length === 0 && filteredRankings.length === 0 && !fetchError && (
+              <div className="bg-white/80 border border-gray-200 rounded-2xl sm:rounded-3xl p-8 text-center space-y-2">
+                <span className="text-3xl">🏆</span>
+                <p className="text-sm sm:text-base font-bold text-gray-800">No active learners ranked yet for this period</p>
+                <p className="text-xs sm:text-sm text-gray-500">Complete your daily learning tasks on the schedule to claim the #1 spot!</p>
+              </div>
+            )}
+
             {/* Rankings List */}
-            <div className="space-y-3 sm:space-y-4">
-              {currentData.rankings.map((item) => (
-                <div
-                  key={item.rank}
-                  className="bg-white/80 border border-gray-200 p-3.5 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between hover:bg-white hover:shadow-md transition"
-                >
-                  <div className="flex items-center space-x-3.5 sm:space-x-5">
-                    <span className="text-xs sm:text-base md:text-lg font-bold text-gray-400 w-6 sm:w-8 md:w-10">#{item.rank}</span>
-                    <div className="w-8 sm:w-11 md:w-14 h-8 sm:h-11 md:h-14 rounded-full bg-gray-200 text-gray-800 font-bold text-xs sm:text-base md:text-lg flex items-center justify-center">
-                      {item.name.charAt(0)}
+            {filteredRankings.length > 0 && (
+              <div className="space-y-3 sm:space-y-4">
+                {filteredRankings.map((item) => (
+                  <div
+                    key={item.rank}
+                    className="bg-white/80 border border-gray-200 p-3.5 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between hover:bg-white hover:shadow-md transition"
+                  >
+                    <div className="flex items-center space-x-3.5 sm:space-x-5">
+                      <span className="text-xs sm:text-base md:text-lg font-bold text-gray-400 w-6 sm:w-8 md:w-10">#{item.rank}</span>
+                      <div className="w-8 sm:w-11 md:w-14 h-8 sm:h-11 md:h-14 rounded-full bg-gray-200 text-gray-800 font-bold text-xs sm:text-base md:text-lg flex items-center justify-center">
+                        {item.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-base md:text-lg font-bold text-gray-900">{item.name}</p>
+                        <p className="text-[10px] sm:text-xs md:text-sm text-gray-400 mt-0.5">🔥 {item.streak} days streak</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-xs sm:text-base md:text-lg font-bold text-gray-900">{item.name}</p>
-                      <p className="text-[10px] sm:text-xs md:text-sm text-gray-400 mt-0.5">🔥 {item.streak} days streak</p>
+
+                    <div className="flex items-center space-x-2.5 sm:space-x-4">
+                      <span className="text-xs sm:text-base md:text-lg font-black text-gray-900">{item.points} pts</span>
+                      <span
+                        className={`text-[9px] sm:text-xs md:text-sm font-black px-2.5 sm:px-4 md:px-5 py-0.5 sm:py-1.5 md:py-2 rounded-full ${
+                          item.status === 'GOING' ? 'bg-[#18191B] text-white' : 'bg-[#DFDACB] text-gray-700'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
 
-                  <div className="flex items-center space-x-2.5 sm:space-x-4">
-                    <span className="text-xs sm:text-base md:text-lg font-black text-gray-900">{item.points} pts</span>
-                    <span
-                      className={`text-[9px] sm:text-xs md:text-sm font-black px-2.5 sm:px-4 md:px-5 py-0.5 sm:py-1.5 md:py-2 rounded-full ${
-                        item.status === 'GOING' ? 'bg-[#18191B] text-white' : 'bg-[#DFDACB] text-gray-700'
-                      }`}
-                    >
-                      {item.status}
-                    </span>
-                  </div>
+            {/* Current User Highlighted Card */}
+            <div className="bg-[#FAF8F2] border-2 border-[#F25C3B] p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-sm">
+              <div className="flex items-center space-x-3.5 sm:space-x-5">
+                <span className="text-xs sm:text-base md:text-lg font-black text-[#F25C3B] w-6 sm:w-8 md:w-10">#{userRank}</span>
+                <div className="w-9 sm:w-12 md:w-14 h-9 sm:h-12 md:h-14 rounded-full bg-[#F25C3B] text-white font-black text-xs sm:text-base md:text-lg flex items-center justify-center shadow-xs">
+                  {displayName.charAt(0).toUpperCase()}
                 </div>
-              ))}
-
-              {/* Current User Highlighted Card */}
-              <div className="bg-[#FAF8F2] border-2 border-[#F25C3B] p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-sm">
-                <div className="flex items-center space-x-3.5 sm:space-x-5">
-                  <span className="text-xs sm:text-base md:text-lg font-black text-[#F25C3B] w-6 sm:w-8 md:w-10">#{currentData.userRank}</span>
-                  <div className="w-9 sm:w-12 md:w-14 h-9 sm:h-12 md:h-14 rounded-full bg-[#F25C3B] text-white font-black text-xs sm:text-base md:text-lg flex items-center justify-center shadow-xs">
-                    {displayName.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-base md:text-lg font-black text-gray-950">{displayName} (You)</p>
-                    <p className="text-[10px] sm:text-xs md:text-sm text-[#F25C3B] font-bold flex items-center gap-1 mt-0.5">
-                      🔥 Active Streak • Keep going!
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2.5 sm:space-x-4">
-                  <span className="text-xs sm:text-base md:text-lg font-black text-gray-950">{currentData.userPoints} pts</span>
-                  <span className="bg-[#F25C3B] text-white text-[9px] sm:text-xs md:text-sm font-black px-2.5 sm:px-4 md:px-5 py-0.5 sm:py-1.5 md:py-2 rounded-full">
-                    ACTIVE
-                  </span>
+                <div>
+                  <p className="text-xs sm:text-base md:text-lg font-black text-gray-950">{displayName} (You)</p>
+                  <p className="text-[10px] sm:text-xs md:text-sm text-[#F25C3B] font-bold flex items-center gap-1 mt-0.5">
+                    🔥 {userStreak} Days Active Streak • Keep going!
+                  </p>
                 </div>
               </div>
+
+              <div className="flex items-center space-x-2.5 sm:space-x-4">
+                <span className="text-xs sm:text-base md:text-lg font-black text-gray-950">{userPoints} pts</span>
+                <span className="bg-[#F25C3B] text-white text-[9px] sm:text-xs md:text-sm font-black px-2.5 sm:px-4 md:px-5 py-0.5 sm:py-1.5 md:py-2 rounded-full">
+                  ACTIVE
+                </span>
+              </div>
             </div>
+
           </div>
 
           {/* Return CTA */}
