@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { fetchProfile, logout, subscribeToAuthState, type BackendUser } from '../services/auth';
 import {
   fetchTasksForDate,
+  fetchTasksCalendarRange,
   createTaskApi,
   updateTaskApi,
   deleteTaskApi,
@@ -47,6 +48,8 @@ export default function Dashboard() {
 
   const [streakData, setStreakData] = useState<StreakData | null>(null);
   const [pointsBonus, setPointsBonus] = useState(0);
+  const [togglingTaskIds, setTogglingTaskIds] = useState<Set<string>>(new Set());
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   // Modal State for Add/Edit Task
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -128,6 +131,21 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error fetching live streak:', err);
+    }
+  }, []);
+
+  // Load calendar range for Week / Month views
+  const loadCalendarRange = useCallback(async (startStr: string, endStr: string) => {
+    try {
+      const rangeData = await fetchTasksCalendarRange(startStr, endStr);
+      if (rangeData && Object.keys(rangeData).length > 0) {
+        setScheduleStore((prev) => ({
+          ...prev,
+          ...rangeData,
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching calendar range:', err);
     }
   }, []);
 
@@ -238,6 +256,20 @@ export default function Dashboard() {
     setCurrentDate(updated);
   };
 
+  // Load calendar ranges on active tab change
+  useEffect(() => {
+    if (activeTab === 'Week') {
+      const week = getCalendarWeek(currentDate, 0);
+      const startStr = formatDateKey(week.monday);
+      const endStr = formatDateKey(week.sunday);
+      loadCalendarRange(startStr, endStr);
+    } else if (activeTab === 'Month') {
+      const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      loadCalendarRange(formatDateKey(firstDay), formatDateKey(lastDay));
+    }
+  }, [activeTab, currentDate, loadCalendarRange]);
+
   const activeMonthDaysCount = monthDaysList.filter((d) => {
     const mDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), d);
     const mKey = formatDateKey(mDate);
@@ -245,11 +277,22 @@ export default function Dashboard() {
     return mTasks.some((t) => t.status === 'DONE');
   }).length;
 
-  // Toggle Task Completion Handler
+  // Toggle Task Completion Handler with Optimistic UI & Rollback
   const toggleTask = async (taskId: string) => {
+    if (togglingTaskIds.has(taskId)) return;
+    setToggleError(null);
+    setTogglingTaskIds((prev) => new Set(prev).add(taskId));
+
     const baseTasks = scheduleStore[dateKey] || [];
     const targetTask = baseTasks.find((t) => t.id === taskId);
-    if (!targetTask) return;
+    if (!targetTask) {
+      setTogglingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+      return;
+    }
 
     const nextStatus = targetTask.status === 'DONE' ? 'PENDING' : 'DONE';
     const isCompleted = nextStatus === 'DONE';
@@ -267,16 +310,31 @@ export default function Dashboard() {
     });
     setScheduleStore((prev) => ({ ...prev, [dateKey]: updatedTasks }));
 
-    // 2. Persist to backend database for (userId, taskId, dateKey) with timezone
+    // 2. Persist to backend database for (userId, taskId, dateKey) with timezone and rollback
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const response = await toggleTaskCompletion(taskId, dateKey, isCompleted, tz);
-      if (response && response.pointsAwarded > 0) {
-        setPointsBonus((prev) => prev + response.pointsAwarded);
+      if (response && response.success) {
+        if (response.pointsDelta !== undefined && response.pointsDelta !== 0) {
+          setPointsBonus((prev) => Math.max(0, prev + response.pointsDelta));
+        }
+        loadStreakData(dateKey);
+      } else {
+        // Rollback on failure
+        setScheduleStore((prev) => ({ ...prev, [dateKey]: baseTasks }));
+        setToggleError('Failed to update task. Changes were rolled back.');
       }
-      loadStreakData(dateKey);
     } catch (err) {
       console.error('Failed to sync task toggle with backend:', err);
+      // Rollback on error
+      setScheduleStore((prev) => ({ ...prev, [dateKey]: baseTasks }));
+      setToggleError('Network error syncing task. Changes were rolled back.');
+    } finally {
+      setTogglingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
     }
   };
 
@@ -321,7 +379,7 @@ export default function Dashboard() {
     setIsTaskModalOpen(true);
   };
 
-  // Handle Delete Task
+  // Handle Delete Task Across All Loaded Calendar Dates
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Are you sure you want to delete this task?')) return;
@@ -329,11 +387,14 @@ export default function Dashboard() {
     try {
       const success = await deleteTaskApi(taskId);
       if (success) {
-        // Remove from schedule store
-        setScheduleStore((prev) => ({
-          ...prev,
-          [dateKey]: (prev[dateKey] || []).filter((t) => t.id !== taskId),
-        }));
+        // Remove from schedule store across ALL calendar dates
+        setScheduleStore((prev) => {
+          const updatedStore: Record<string, TaskItem[]> = {};
+          for (const [key, tasks] of Object.entries(prev)) {
+            updatedStore[key] = tasks.filter((t) => t.id !== taskId);
+          }
+          return updatedStore;
+        });
       }
     } catch (err) {
       console.error('Failed to delete task:', err);
@@ -583,6 +644,20 @@ export default function Dashboard() {
                 </button>
               </div>
 
+              {/* Error Notification Banner */}
+              {toggleError && (
+                <div className="bg-red-100 border border-red-300 text-red-800 text-xs sm:text-sm font-semibold p-3 sm:p-4 rounded-xl flex items-center justify-between">
+                  <span>⚠️ {toggleError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setToggleError(null)}
+                    className="text-red-600 font-bold ml-2 hover:underline cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {/* Tasks List */}
               <div className="space-y-3 sm:space-y-4 pt-1">
                 {tasksLoading ? (
@@ -601,77 +676,90 @@ export default function Dashboard() {
                     </button>
                   </div>
                 ) : (
-                  currentTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      onClick={() => toggleTask(task.id)}
-                      role="button"
-                      tabIndex={0}
-                      className={`p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer select-none transition-all active:scale-[0.99] group ${
-                        task.status === 'DONE'
-                          ? 'bg-[#E5E1D3] shadow-xs'
-                          : 'bg-white shadow-xs hover:bg-gray-50 hover:shadow-md'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3.5 sm:space-x-5 flex-1 min-w-0 pr-2">
-                        <span className="text-xs sm:text-base md:text-lg font-bold text-gray-500 w-14 sm:w-18 md:w-22 shrink-0">
-                          {task.time}
-                        </span>
-                        <div className="truncate">
-                          <p
-                            className={`text-xs sm:text-base md:text-lg font-bold transition-all truncate ${
-                              task.status === 'DONE' ? 'text-gray-600 line-through opacity-80' : 'text-gray-950'
-                            }`}
-                          >
-                            {task.title}
-                          </p>
-                          <div className="flex items-center space-x-2 text-[11px] sm:text-xs md:text-sm text-gray-400 mt-0.5">
-                            <span>{task.category}</span>
-                            {task.isRecurring && (
-                              <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                                🔁 {task.recurringType}
-                              </span>
-                            )}
+                  currentTasks.map((task) => {
+                    const isToggling = togglingTaskIds.has(task.id);
+                    return (
+                      <div
+                        key={task.id}
+                        onClick={() => toggleTask(task.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleTask(task.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={task.status === 'DONE'}
+                        className={`p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer select-none transition-all active:scale-[0.99] group ${
+                          isToggling ? 'opacity-60 pointer-events-none' : ''
+                        } ${
+                          task.status === 'DONE'
+                            ? 'bg-[#E5E1D3] shadow-xs'
+                            : 'bg-white shadow-xs hover:bg-gray-50 hover:shadow-md'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3.5 sm:space-x-5 flex-1 min-w-0 pr-2">
+                          <span className="text-xs sm:text-base md:text-lg font-bold text-gray-500 w-14 sm:w-18 md:w-22 shrink-0">
+                            {task.time}
+                          </span>
+                          <div className="truncate">
+                            <p
+                              className={`text-xs sm:text-base md:text-lg font-bold transition-all truncate ${
+                                task.status === 'DONE' ? 'text-gray-600 line-through opacity-80' : 'text-gray-950'
+                              }`}
+                            >
+                              {task.title}
+                            </p>
+                            <div className="flex items-center space-x-2 text-[11px] sm:text-xs md:text-sm text-gray-400 mt-0.5">
+                              <span>{task.category}</span>
+                              {task.isRecurring && (
+                                <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                                  🔁 {task.recurringType}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center space-x-2 shrink-0">
-                        {/* Quick Edit and Delete buttons on hover */}
-                        <button
-                          type="button"
-                          onClick={(e) => handleOpenEditModal(task, e)}
-                          title="Edit Task"
-                          className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-gray-200 text-gray-600 transition cursor-pointer"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteTask(task.id, e)}
-                          title="Delete Task"
-                          className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-red-100 text-red-600 transition cursor-pointer"
-                        >
-                          🗑️
-                        </button>
+                        <div className="flex items-center space-x-2 shrink-0">
+                          {/* Quick Edit and Delete buttons on hover */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            title="Edit Task"
+                            className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-gray-200 text-gray-600 transition cursor-pointer"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteTask(task.id, e)}
+                            title="Delete Task"
+                            className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-red-100 text-red-600 transition cursor-pointer"
+                          >
+                            🗑️
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleTask(task.id);
-                          }}
-                          className={`cursor-pointer transition-all active:scale-95 text-[10px] sm:text-xs md:text-sm font-black px-3.5 sm:px-4 md:px-5 py-1.5 sm:py-2 md:py-2.5 rounded-full shadow-xs ${
-                            task.status === 'DONE'
-                              ? 'bg-[#18191B] hover:bg-black text-white'
-                              : 'bg-[#DFDACB] hover:bg-[#D0CAB9] text-gray-800'
-                          }`}
-                        >
-                          {task.status === 'DONE' ? '✓ DONE' : '○ PENDING'}
-                        </button>
+                          <button
+                            type="button"
+                            disabled={isToggling}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTask(task.id);
+                            }}
+                            className={`cursor-pointer transition-all active:scale-95 text-[10px] sm:text-xs md:text-sm font-black px-3.5 sm:px-4 md:px-5 py-1.5 sm:py-2 md:py-2.5 rounded-full shadow-xs disabled:opacity-50 ${
+                              task.status === 'DONE'
+                                ? 'bg-[#18191B] hover:bg-black text-white'
+                                : 'bg-[#DFDACB] hover:bg-[#D0CAB9] text-gray-800'
+                            }`}
+                          >
+                            {isToggling ? '...' : task.status === 'DONE' ? '✓ DONE' : '○ PENDING'}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -761,71 +849,84 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {currentTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    onClick={() => toggleTask(task.id)}
-                    role="button"
-                    tabIndex={0}
-                    className={`p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer select-none transition-all active:scale-[0.99] group ${
-                      task.status === 'DONE'
-                        ? 'bg-[#E5E1D3] shadow-xs'
-                        : 'bg-white shadow-xs hover:bg-gray-50 hover:shadow-md'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3.5 sm:space-x-5 flex-1 min-w-0 pr-2">
-                      <span className="text-xs sm:text-base md:text-lg font-bold text-gray-500 w-14 sm:w-18 md:w-22 shrink-0">
-                        {task.time}
-                      </span>
-                      <div className="truncate">
-                        <p
-                          className={`text-xs sm:text-base md:text-lg font-bold transition-all truncate ${
-                            task.status === 'DONE' ? 'text-gray-600 line-through opacity-80' : 'text-gray-950'
+                {currentTasks.map((task) => {
+                  const isToggling = togglingTaskIds.has(task.id);
+                  return (
+                    <div
+                      key={task.id}
+                      onClick={() => toggleTask(task.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleTask(task.id);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={task.status === 'DONE'}
+                      className={`p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer select-none transition-all active:scale-[0.99] group ${
+                        isToggling ? 'opacity-60 pointer-events-none' : ''
+                      } ${
+                        task.status === 'DONE'
+                          ? 'bg-[#E5E1D3] shadow-xs'
+                          : 'bg-white shadow-xs hover:bg-gray-50 hover:shadow-md'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3.5 sm:space-x-5 flex-1 min-w-0 pr-2">
+                        <span className="text-xs sm:text-base md:text-lg font-bold text-gray-500 w-14 sm:w-18 md:w-22 shrink-0">
+                          {task.time}
+                        </span>
+                        <div className="truncate">
+                          <p
+                            className={`text-xs sm:text-base md:text-lg font-bold transition-all truncate ${
+                              task.status === 'DONE' ? 'text-gray-600 line-through opacity-80' : 'text-gray-950'
+                            }`}
+                          >
+                            {task.title}
+                          </p>
+                          <p className="text-[11px] sm:text-xs md:text-sm text-gray-400 mt-0.5">
+                            {task.time} • {task.category}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenEditModal(task, e)}
+                          title="Edit Task"
+                          className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-gray-200 text-gray-600 transition cursor-pointer"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteTask(task.id, e)}
+                          title="Delete Task"
+                          className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-red-100 text-red-600 transition cursor-pointer"
+                        >
+                          🗑️
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isToggling}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleTask(task.id);
+                          }}
+                          className={`cursor-pointer transition-all active:scale-95 text-[10px] sm:text-xs md:text-sm font-black px-3.5 sm:px-4 md:px-5 py-1.5 sm:py-2 md:py-2.5 rounded-full shadow-xs disabled:opacity-50 ${
+                            task.status === 'DONE'
+                              ? 'bg-[#18191B] hover:bg-black text-white'
+                              : 'bg-[#DFDACB] hover:bg-[#D0CAB9] text-gray-800'
                           }`}
                         >
-                          {task.title}
-                        </p>
-                        <p className="text-[11px] sm:text-xs md:text-sm text-gray-400 mt-0.5">
-                          {task.time} • {task.category}
-                        </p>
+                          {isToggling ? '...' : task.status === 'DONE' ? '✓ DONE' : '○ PENDING'}
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center space-x-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={(e) => handleOpenEditModal(task, e)}
-                        title="Edit Task"
-                        className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-gray-200 text-gray-600 transition cursor-pointer"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDeleteTask(task.id, e)}
-                        title="Delete Task"
-                        className="opacity-60 group-hover:opacity-100 p-1.5 sm:p-2 rounded-full hover:bg-red-100 text-red-600 transition cursor-pointer"
-                      >
-                        🗑️
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleTask(task.id);
-                        }}
-                        className={`cursor-pointer transition-all active:scale-95 text-[10px] sm:text-xs md:text-sm font-black px-3.5 sm:px-4 md:px-5 py-1.5 sm:py-2 md:py-2.5 rounded-full shadow-xs ${
-                          task.status === 'DONE'
-                            ? 'bg-[#18191B] hover:bg-black text-white'
-                            : 'bg-[#DFDACB] hover:bg-[#D0CAB9] text-gray-800'
-                        }`}
-                      >
-                        {task.status === 'DONE' ? '✓ DONE' : '○ PENDING'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1126,12 +1227,25 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-3 sm:space-y-4">
-              <div className="p-4 sm:p-6 bg-white/5 hover:bg-white/10 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer transition">
-                <div>
-                  <p className="text-sm sm:text-base md:text-lg font-bold">Account Settings</p>
-                  <p className="text-xs sm:text-sm text-gray-400 mt-0.5">{user?.email}</p>
+              <div className="p-4 sm:p-6 bg-white/5 rounded-2xl sm:rounded-3xl space-y-3 border border-white/10">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm sm:text-base md:text-lg font-bold">Learner Profile</p>
+                  <span className="bg-[#F25C3B] text-white text-[10px] sm:text-xs font-black px-2.5 py-0.5 rounded-full">ACTIVE</span>
                 </div>
-                <span className="text-gray-400 text-lg sm:text-xl">›</span>
+                <div className="space-y-1.5 text-xs sm:text-sm text-gray-300">
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-gray-400">Name</span>
+                    <span className="font-semibold text-white">{displayName}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-gray-400">Email</span>
+                    <span className="font-semibold text-white">{user?.email || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-gray-400">Current Streak</span>
+                    <span className="font-semibold text-[#F25C3B]">🔥 {currentStreak} Days</span>
+                  </div>
+                </div>
               </div>
 
               <div
@@ -1139,11 +1253,11 @@ export default function Dashboard() {
                   setShowSettings(false);
                   handleNavigate('/leaderboard', 'Opening Leaderboard...');
                 }}
-                className="p-4 sm:p-6 bg-white/5 hover:bg-white/10 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer transition"
+                className="p-4 sm:p-6 bg-white/5 hover:bg-white/10 rounded-2xl sm:rounded-3xl flex items-center justify-between cursor-pointer transition border border-white/5"
               >
                 <div>
                   <p className="text-sm sm:text-base md:text-lg font-bold">Leaderboard & Cohort</p>
-                  <p className="text-xs sm:text-sm text-gray-400 mt-0.5">Rank #14 • {290 + pointsBonus} Points</p>
+                  <p className="text-xs sm:text-sm text-gray-400 mt-0.5">View live rank & podium standings</p>
                 </div>
                 <span className="text-gray-400 text-lg sm:text-xl">›</span>
               </div>

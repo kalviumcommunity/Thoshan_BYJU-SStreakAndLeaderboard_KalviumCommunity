@@ -52,6 +52,8 @@ export interface TaskCompletionRecord {
 export interface ToggleTaskResponse {
   success: boolean;
   completion: TaskCompletionRecord;
+  completed?: boolean;
+  pointsDelta: number;
   pointsAwarded: number;
 }
 
@@ -83,6 +85,43 @@ export async function fetchTasksForDate(dateStr: string): Promise<TaskItem[]> {
   } catch (error) {
     console.error('Failed to fetch tasks for date:', dateStr, error);
     return [];
+  }
+}
+
+/**
+ * Fetch tasks grouped by date across a range (startDate to endDate) in a single request.
+ */
+export async function fetchTasksCalendarRange(
+  startDate: string,
+  endDate: string
+): Promise<Record<string, TaskItem[]>> {
+  const token = await getAuthToken();
+  if (!token) {
+    return {};
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/tasks/calendar?startDate=${startDate}&endDate=${endDate}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return {};
+    }
+
+    const data = await response.json();
+    if (data.success && data.calendar) {
+      return data.calendar;
+    }
+    return {};
+  } catch (error) {
+    console.error('Failed to fetch calendar range:', startDate, endDate, error);
+    return {};
   }
 }
 
