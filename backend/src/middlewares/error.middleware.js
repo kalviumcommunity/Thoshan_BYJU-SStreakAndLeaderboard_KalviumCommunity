@@ -5,15 +5,20 @@
  */
 function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-vars
   const statusCode = err.statusCode || err.status || 500;
-  const message = err.message || 'Internal Server Error';
+  let message = err.message || 'Internal Server Error';
 
-  if (process.env.NODE_ENV === 'development' && statusCode === 500) {
-    console.error('[Unhandled Error]', err);
+  if (statusCode === 500) {
+    console.error('[Unhandled Server Error]', err);
+    // Sanitize message in production to prevent leaking db connection details
+    if (process.env.NODE_ENV === 'production' || !err.statusCode) {
+      message = 'An unexpected server error occurred. Please try again later.';
+    }
   }
 
   res.status(statusCode).json({
     success: false,
-    message: message
+    message: message,
+    ...(err.code ? { code: err.code } : {})
   });
 }
 

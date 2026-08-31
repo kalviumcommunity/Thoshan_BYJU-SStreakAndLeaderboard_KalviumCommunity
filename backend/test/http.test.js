@@ -110,12 +110,12 @@ async function testHttpEndpoints() {
 
   } finally {
     server.close();
+    const redis = require('../src/config/redis');
+    await redis.disconnect();
   }
 
   console.log(`\nHTTP Tests completed: ${passed} passed, ${failed} failed.`);
-  if (failed > 0) {
-    process.exit(1);
-  }
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 testHttpEndpoints();

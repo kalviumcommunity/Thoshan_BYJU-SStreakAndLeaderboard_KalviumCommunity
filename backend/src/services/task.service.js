@@ -10,33 +10,46 @@ const DEFAULT_TASKS = [
     title: 'Calculus: Derivatives & Limits',
     description: 'Master core differentiation techniques and limit theorems',
     category: 'Core Concept',
-    time: '9 AM',
+    time: '09:00 AM',
     isRecurring: true,
     recurringType: 'daily',
+    recurringDays: '0,1,2,3,4,5,6',
   },
   {
     title: 'Kinematics & Motion Speed Quiz',
     description: 'Solve 10 timed practice questions on 1D/2D kinematics',
     category: 'Quiz Practice',
-    time: '10 AM',
+    time: '11:00 AM',
     isRecurring: true,
     recurringType: 'daily',
+    recurringDays: '0,1,2,3,4,5,6',
   },
   {
     title: 'Organic Chemistry Reactions',
     description: 'Review reaction mechanisms and complete daily revision notes',
     category: 'Daily Task',
-    time: '11 AM',
+    time: '02:00 PM',
     isRecurring: true,
     recurringType: 'daily',
+    recurringDays: '0,1,2,3,4,5,6',
   },
   {
-    title: 'Weekly Grand Assessment',
-    description: 'Comprehensive subject test with instant rank evaluation',
-    category: 'Assessment',
-    time: '12 PM',
+    title: 'Biology: Genetics & Cellular Reproduction',
+    description: 'Daily concept recap and practice exercises',
+    category: 'Biology',
+    time: '04:30 PM',
     isRecurring: true,
     recurringType: 'daily',
+    recurringDays: '0,1,2,3,4,5,6',
+  },
+  {
+    title: 'Weekly Grand Assessment & Mental Math',
+    description: 'Comprehensive subject test with instant rank evaluation',
+    category: 'Assessment',
+    time: '07:00 PM',
+    isRecurring: true,
+    recurringType: 'daily',
+    recurringDays: '0,1,2,3,4,5,6',
   },
 ];
 
@@ -58,6 +71,7 @@ async function seedDefaultTasksForUser(userId) {
         time: t.time,
         isRecurring: t.isRecurring,
         recurringType: t.recurringType,
+        recurringDays: t.recurringDays,
       },
     });
   }
@@ -71,7 +85,13 @@ async function seedDefaultTasksForUser(userId) {
  */
 function isTaskActiveOnDate(task, dateString) {
   if (!task.isRecurring) {
-    return task.date === dateString;
+    if (task.date) {
+      return task.date === dateString;
+    }
+    const createdDateStr = task.createdAt
+      ? new Date(task.createdAt).toISOString().split('T')[0]
+      : dateString;
+    return createdDateStr === dateString;
   }
 
   // Parse day of week (0=Sun, 1=Mon, ..., 6=Sat) in UTC to prevent timezone skew
@@ -125,6 +145,12 @@ async function createTask(userId, data) {
 
   if (!title || typeof title !== 'string' || !title.trim()) {
     const error = new Error('Task title is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!isRecurring && date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const error = new Error('Invalid date format. Expected YYYY-MM-DD');
     error.statusCode = 400;
     throw error;
   }
@@ -526,6 +552,10 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed, timez
     if (completed && !previouslyCompleted) {
       pointsDelta = 15;
 
+      const now = new Date();
+      const isTodayCompletion = dateString === streakService.getTodayInTimezone(timezone) || targetCompletionDate.getTime() === leaderboardService.getStartOfDay(now).getTime();
+      const activityTimestamp = isTodayCompletion ? now : targetCompletionDate;
+
       // Log activity
       await tx.activity.create({
         data: {
@@ -533,7 +563,7 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed, timez
           activityType: 'task_completion',
           points: 15,
           metadata: JSON.stringify({ taskId, date: dateString }),
-          timestamp: targetCompletionDate,
+          timestamp: activityTimestamp,
         },
       });
 
@@ -587,7 +617,26 @@ async function toggleTaskCompletion(userId, taskId, dateString, completed, timez
 
   // 4. Invalidate Redis leaderboard caches if scores changed (P1 cache invalidation)
   if (txResult.pointsDelta !== 0) {
-    await leaderboardService.invalidateLeaderboardCache();
+    try {
+      const now = new Date();
+      const todayIso = streakService.getTodayInTimezone(timezone);
+      const [y, m, d] = dateString.split('-').map(Number);
+      const targetDate = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+      const isToday = dateString === todayIso || targetDate.getTime() === leaderboardService.getStartOfDay(now).getTime();
+
+      const isCurrentWeek = leaderboardService.getStartOfWeek(targetDate).getTime() === leaderboardService.getStartOfWeek(now).getTime();
+      const isCurrentMonth = leaderboardService.getStartOfMonth(targetDate).getTime() === leaderboardService.getStartOfMonth(now).getTime();
+
+      const affectedTimeframes = ['all_time'];
+      if (isToday) affectedTimeframes.push('day');
+      if (isCurrentWeek) affectedTimeframes.push('week');
+      if (isCurrentMonth) affectedTimeframes.push('month');
+
+      await leaderboardService.invalidateLeaderboardCache(affectedTimeframes);
+    } catch (cacheErr) {
+      // Redis errors must never crash the task-completion request
+      console.warn('[TaskService] Leaderboard cache invalidation deferred:', cacheErr.message);
+    }
   }
 
   // 5. Calculate updated streak metrics based on live database state

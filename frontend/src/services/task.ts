@@ -1,6 +1,4 @@
-import { getAuthToken } from './auth';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+import { apiFetch } from './apiClient';
 
 export interface TaskItem {
   id: string;
@@ -61,18 +59,8 @@ export interface ToggleTaskResponse {
  * Fetch all tasks active for a specific date (YYYY-MM-DD), with completion status attached.
  */
 export async function fetchTasksForDate(dateStr: string): Promise<TaskItem[]> {
-  const token = await getAuthToken();
-  if (!token) {
-    return [];
-  }
-
   try {
-    const response = await fetch(`${API_BASE_URL}/tasks?date=${dateStr}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
+    const response = await apiFetch(`/tasks?date=${dateStr}`);
     if (!response.ok) {
       return [];
     }
@@ -95,21 +83,8 @@ export async function fetchTasksCalendarRange(
   startDate: string,
   endDate: string
 ): Promise<Record<string, TaskItem[]>> {
-  const token = await getAuthToken();
-  if (!token) {
-    return {};
-  }
-
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/tasks/calendar?startDate=${startDate}&endDate=${endDate}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-
+    const response = await apiFetch(`/tasks/calendar?startDate=${startDate}&endDate=${endDate}`);
     if (!response.ok) {
       return {};
     }
@@ -129,22 +104,18 @@ export async function fetchTasksCalendarRange(
  * Create a new task (one-time or recurring).
  */
 export async function createTaskApi(input: CreateTaskInput): Promise<TaskItem | null> {
-  const token = await getAuthToken();
-  if (!token) {
-    return null;
-  }
-
   try {
-    const response = await fetch(`${API_BASE_URL}/tasks`, {
+    const response = await apiFetch('/tasks', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(input),
     });
 
     if (!response.ok) {
+      const err = await response.json().catch(() => null);
+      console.error('Task API error:', err || response.statusText);
       return null;
     }
 
@@ -163,22 +134,18 @@ export async function createTaskApi(input: CreateTaskInput): Promise<TaskItem | 
  * Update an existing task.
  */
 export async function updateTaskApi(taskId: string, input: UpdateTaskInput): Promise<TaskItem | null> {
-  const token = await getAuthToken();
-  if (!token) {
-    return null;
-  }
-
   try {
-    const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+    const response = await apiFetch(`/tasks/${taskId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(input),
     });
 
     if (!response.ok) {
+      const err = await response.json().catch(() => null);
+      console.error('Task API error:', err || response.statusText);
       return null;
     }
 
@@ -197,17 +164,9 @@ export async function updateTaskApi(taskId: string, input: UpdateTaskInput): Pro
  * Delete an existing task.
  */
 export async function deleteTaskApi(taskId: string): Promise<boolean> {
-  const token = await getAuthToken();
-  if (!token) {
-    return false;
-  }
-
   try {
-    const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+    const response = await apiFetch(`/tasks/${taskId}`, {
       method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
     });
 
     if (!response.ok) {
@@ -231,28 +190,23 @@ export async function toggleTaskCompletion(
   completed: boolean,
   timezone?: string
 ): Promise<ToggleTaskResponse | null> {
-  const token = await getAuthToken();
-  if (!token) {
-    return null;
-  }
-
   try {
-    const response = await fetch(`${API_BASE_URL}/tasks/toggle`, {
+    const response = await apiFetch('/tasks/toggle', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
         ...(timezone ? { 'X-Timezone': timezone } : {}),
       },
       body: JSON.stringify({
         taskId,
         date: dateStr,
         completed,
-        timezone,
       }),
     });
 
     if (!response.ok) {
+      const err = await response.json().catch(() => null);
+      console.error('Toggle Task API error:', err || response.statusText);
       return null;
     }
 
@@ -262,38 +216,7 @@ export async function toggleTaskCompletion(
     }
     return null;
   } catch (error) {
-    console.error('Failed to toggle task completion:', error);
+    console.error('Failed to toggle task:', error);
     return null;
-  }
-}
-
-/**
- * Legacy helper to fetch all completion mappings for a date.
- */
-export async function fetchDateCompletions(dateStr: string): Promise<Record<string, boolean>> {
-  const token = await getAuthToken();
-  if (!token) {
-    return {};
-  }
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/tasks/completions?date=${dateStr}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      return {};
-    }
-
-    const data = await response.json();
-    if (data.success && data.completions) {
-      return data.completions;
-    }
-    return {};
-  } catch (error) {
-    console.error('Failed to fetch completions for date:', dateStr, error);
-    return {};
   }
 }

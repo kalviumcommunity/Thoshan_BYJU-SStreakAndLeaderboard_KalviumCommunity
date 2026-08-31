@@ -16,15 +16,15 @@ async function verifyFirebaseToken(req, res, next) {
     });
   }
 
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+  const rawHeader = authHeader.trim();
+  if (!rawHeader.startsWith('Bearer ') && rawHeader !== 'Bearer') {
     return res.status(401).json({
       success: false,
       message: 'Malformed Authorization header. Expected format: Bearer <token>',
     });
   }
 
-  const token = parts[1].trim();
+  const token = rawHeader.slice(6).trim();
   if (!token) {
     return res.status(401).json({
       success: false,

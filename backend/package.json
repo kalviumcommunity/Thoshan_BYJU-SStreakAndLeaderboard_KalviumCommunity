@@ -11,10 +11,12 @@
     "prisma:studio": "prisma studio",
     "seed": "node scripts/seed-user-data.js",
     "test": "node test/regression.test.js",
-    "test:all": "node test/http.test.js && node test/streak.test.js && node test/leaderboard.test.js && node test/regression.test.js",
+    "test:all": "node test/auth-local.test.js && node test/auth.test.js && node test/http.test.js && node test/streak.test.js && node test/leaderboard.test.js && node test/regression.test.js && node test/edge-cases.test.js",
+    "test:auth": "node test/auth-local.test.js && node test/auth.test.js",
     "test:regression": "node test/regression.test.js",
     "test:streak": "node test/streak.test.js",
-    "test:leaderboard": "node test/leaderboard.test.js"
+    "test:leaderboard": "node test/leaderboard.test.js",
+    "test:edge-cases": "node test/edge-cases.test.js"
   },
   "keywords": [
     "byjus",

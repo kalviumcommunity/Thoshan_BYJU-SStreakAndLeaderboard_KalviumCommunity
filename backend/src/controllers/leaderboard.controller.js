@@ -42,6 +42,7 @@ async function getLeaderboard(req, res, next) {
       totalLearners: leaderboardData.totalLearners,
       podium: leaderboardData.podium,
       rankings: leaderboardData.rankings,
+      allRanks: leaderboardData.allRanks || [...(leaderboardData.podium || []), ...(leaderboardData.rankings || [])],
       userStanding: userStanding
         ? {
             userRank: userStanding.userRank,

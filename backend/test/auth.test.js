@@ -117,7 +117,7 @@ async function runTests() {
     await verifyFirebaseToken(req, res, () => {});
     assert.strictEqual(statusCode, 401);
     assert.strictEqual(jsonBody.success, false);
-    assert(jsonBody.message.includes('malformed'));
+    assert(/malformed/i.test(jsonBody.message));
   });
 
   // 5. Test verifyFirebaseToken - empty token
@@ -139,7 +139,7 @@ async function runTests() {
     await verifyFirebaseToken(req, res, () => {});
     assert.strictEqual(statusCode, 401);
     assert.strictEqual(jsonBody.success, false);
-    assert(jsonBody.message.includes('empty'));
+    assert(/empty/i.test(jsonBody.message));
   });
 
   // 6. Test verifyFirebaseToken - expired token simulation

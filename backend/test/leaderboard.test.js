@@ -39,7 +39,7 @@ async function runLeaderboardTests() {
     await prisma.user.deleteMany({});
 
     const now = new Date();
-    const todayStr = '2024-12-09';
+    const todayStr = now.toISOString().split('T')[0];
 
     u1 = await prisma.user.create({
       data: {

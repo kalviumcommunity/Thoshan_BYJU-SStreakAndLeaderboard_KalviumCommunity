@@ -3,6 +3,7 @@ const assert = require('assert');
 const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const prisma = require('../src/config/prisma');
+const redis = require('../src/config/redis');
 
 async function testLocalAuthEndpoints() {
   console.log('--- Starting Local Auth (Bcrypt + JWT) Test Suite ---');
